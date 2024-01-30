@@ -1,13 +1,15 @@
-import numpy as np
+import os
 import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import torch
+import umap
+from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-from sklearn.cluster import KMeans
-import umap
-import matplotlib.pyplot as plt
-import pandas as pd
-import os
+
 
 class myReduction():
     def __init__(self, method, n_components, print_more=False, svd_solver="full") -> None:
@@ -27,7 +29,7 @@ class myReduction():
         if self.n_components == -1:
             if self.print_more:
                 print("n_components = -1, will return identity")
-            
+
         else:
             if self.method == "UMAP":   # for UMAP, explicitly centralize the data
                 data = data - np.mean(data, axis = 0)
@@ -69,7 +71,7 @@ def getSingleLoss(x, verbose = False):
 
     if verbose:
         print("var(x1) = {}, var(x2) = {}, var(x) = {}".format(x1.var(), x2.var(), x.var()))
-    return (x1.var() + x2.var()) / x.var() 
+    return (x1.var() + x2.var()) / x.var()
 
 def getLoss(z, weights, verbose = False):
     # weighted loss according to `weights`
@@ -80,13 +82,13 @@ def get_all_data(data_dict):
     for dataset in data_dict.keys():
         raw_data = np.concatenate([w[0] for w in data_dict[dataset]],axis=0)
         label = np.concatenate([w[1] for w in data_dict[dataset]])
-        
+
         all_data.append(raw_data)
         all_labels.append(label)
     all_data, all_labels = np.concatenate(all_data), np.concatenate(all_labels)
-    
+
     hs0, hs1 = all_data[:, :all_data.shape[-1] // 2], all_data[:, all_data.shape[-1] // 2:]
-    
+
     return hs0, hs1, all_labels
 
 
@@ -161,16 +163,16 @@ class ConsistencyMethod(object):
         min_p = torch.min(p0, p1)
         return (min_p**2).mean(0)
         #return (min_p).mean(0)**2  # seems a bit worse
-    
-    
+
+
     def get_similarity_loss(self, p0, p1):
         """
         Assumes p0 and p1 are each a tensor of probabilities of shape (n,1) or (n,)
         Encourages p0 to be close to 1-p1 and vice versa
         """
         return ((p0 - (1-p1))**2).mean(0)
-    
-    
+
+
     def get_loss(self, p0, p1):
         """
         Returns the ConsistencyModel loss for two probabilities each of shape (n,1) or (n,)
@@ -178,16 +180,16 @@ class ConsistencyMethod(object):
         """
         similarity_loss = self.get_similarity_loss(p0, p1)
         confidence_loss = self.get_confidence_loss(p0, p1)
-        
+
         return similarity_loss + confidence_loss
-    
+
     def get_losses(self, p0, p1):
         """Returns loss, similarity_loss, confidence_loss"""
         similarity_loss = self.get_similarity_loss(p0, p1)
         confidence_loss = self.get_confidence_loss(p0, p1)
-        
+
         return similarity_loss + confidence_loss, similarity_loss, confidence_loss
-    
+
     # return the probability tuple (p0, p1)
     def transform(self, data: list, theta_np = None):
         if theta_np is None:
@@ -204,7 +206,7 @@ class ConsistencyMethod(object):
         """
         p0, p1 = self.transform(data, theta_np)
         avg_confidence = 0.5*(p0 + (1-p1))
-        
+
         label = label.reshape(-1)
         predictions = (avg_confidence < 0.5).astype(int)[:, 0]
         acc = (predictions == label).mean()
@@ -218,8 +220,8 @@ class ConsistencyMethod(object):
             losses = [l.cpu().detach().item() for l in self.get_losses(torch.tensor(p0), torch.tensor(p1))]
             return max(acc, 1 - acc), losses
         return max(acc, 1 - acc)
-    
-        
+
+
     def train(self):
         """
         Does a single training run of nepochs epochs
@@ -228,7 +230,7 @@ class ConsistencyMethod(object):
         # convert to tensors
         x0 = torch.tensor(self.x0, dtype=torch.float, requires_grad=False, device=self.device)
         x1 = torch.tensor(self.x1, dtype=torch.float, requires_grad=False, device=self.device)
-        
+
         # initialize parameters
         if self.init_theta is None:
             init_theta = np.random.randn(self.d).reshape(1, -1)
@@ -253,12 +255,12 @@ class ConsistencyMethod(object):
 
         # Start training (full batch)
         for _ in range(self.nepochs):
-            
+
             # project onto theta
             theta_ = project_coeff(theta, constraints_t)
             z0, z1 = x0.mm(theta_.T), x1.mm(theta_.T)
 
-            # sigmoide to get probability            
+            # sigmoide to get probability
             p0, p1 = torch.sigmoid(z0), torch.sigmoid(z1)
 
             # get the corresponding loss
@@ -278,7 +280,7 @@ class ConsistencyMethod(object):
             theta_np = theta.cpu().detach().numpy().reshape(1, -1)
             # print("Norm of theta is " + str(np.linalg.norm(theta_np)))
             loss_np = loss.detach().cpu().item()
-        
+
         return theta_np, loss_np
 
     def validate_data(self, data):
@@ -303,13 +305,13 @@ class ConsistencyMethod(object):
         self.nepochs = nepochs
         self.ntries = ntries
         self.lr = lr
-        
+
         self.device = device
-        
+
         self.init_theta = init_theta
         if self.init_theta is not None:
             self.ntries = 1
-    
+
         if self.verbose:
             print("String fiting data with Prob. nepochs: {}, ntries: {}, lr: {}".format(
                 nepochs, ntries, lr
@@ -324,20 +326,20 @@ class ConsistencyMethod(object):
 
         self.x0 = self.add_ones_dimension(data[0])
         self.x1 = self.add_ones_dimension(data[1])
-        self.y = label.reshape(-1)       
+        self.y = label.reshape(-1)
         self.d = self.x0.shape[-1]
 
         for _ in range(self.ntries):
             # train
             theta_np, loss = self.train()
-            
+
             # evaluate
             acc = self.get_acc(theta_np, data, label, getloss = False)
-            
+
             # save
             losses.append(loss)
             accs.append(acc)
-            
+
             # see if it's the best run so far
             if loss < self.best_loss:
                 if self.verbose:
@@ -345,10 +347,10 @@ class ConsistencyMethod(object):
                 self.best_theta = theta_np
                 self.best_loss = loss
                 best_acc = acc
-                
+
         if self.verbose:
             self.visualize(losses, accs)
-        
+
         return self.best_theta, self.best_loss, best_acc
 
     def score(self, data: list, label, getloss=False, save_file=None):
@@ -356,9 +358,13 @@ class ConsistencyMethod(object):
         return self.get_acc(self.best_theta, data, label, getloss, save_file=save_file)
 
 
+CLASSIFICATION_METHODS = ["TPC", "LR", "BSS", "KMeans"]
+
 class myClassifyModel(LogisticRegression):
     def __init__(self, method, print_more = False):
-        assert method in ['TPC', 'LR', 'BSS', 'KMeans'], "currently only support method to be `TPC`, `LR`, 'KMeans` and `BSS`!"
+        if method not in CLASSIFICATION_METHODS:
+            raise ValueError(
+                f"currently only support method to be `TPC`, `LR`, 'KMeans` and `BSS`! Got {method}")
         self.method = method
         super(myClassifyModel, self).__init__(max_iter = 10000, n_jobs = 1, C = 0.1)
         self.print_more = print_more
@@ -398,7 +404,7 @@ class myClassifyModel(LogisticRegression):
 
         elif self.method == "BSS":    # in this case, `data` will be a list
             assert type(data) == list, "When using BSS mode, data should be a list instead of {}".format(type(data))
-            
+
             x = [torch.tensor(w, device=device) for w in data]
             dim = data[0].shape[1]  # hidden dimension
 
@@ -440,7 +446,7 @@ class myClassifyModel(LogisticRegression):
 
                     if ((epoch + 1) % 50 == 0 and self.print_more) or epoch in [0, epochs - 1]:
                         theta_np = theta.cpu().detach().numpy().reshape(1, -1)  # same as coef
-                        
+
                         projected, gth = np.concatenate([w @ theta_np.T for w in data]).reshape(-1), np.concatenate(label).reshape(-1)
 
                         self.avg = 0.0
@@ -493,7 +499,7 @@ class myClassifyModel(LogisticRegression):
 
             if sample_weight is not None:
                 acc = super().score(data,label, sample_weight)
-            else:   
+            else:
                 acc = super().score(data, label)
             if getloss:
                 if self.method == "BSS":
@@ -518,7 +524,7 @@ def getPair(target_dict, data_dict, permutation_dict, projection_model, split = 
                 projection_model.transform(data_dict[key][idx][0][permutation_dict[key][split_idx]]),
                 data_dict[key][idx][1][permutation_dict[key][split_idx]]
             ]) # each is a data & label paird, selecting the corresponding split
-    
+
     data, label = getConcat([w[0] for w in lis]),  getConcat([w[1] for w in lis])
 
     return data, label
@@ -578,7 +584,7 @@ def mainResults(
     start = time.time()
     if print_more:
         print("Projection method: {} (n_con = {}) in {}\nClassification method: {} in: {}".format(
-            projection_method, n_components, projection_dict, 
+            projection_method, n_components, projection_dict,
             classification_method, test_dict))
 
     no_train = False
@@ -606,29 +612,29 @@ def mainResults(
         if project_along_mean_diff:
             datas = project_data_along_axis(datas, label)
         data = [datas[:,:datas.shape[1]//2], datas[:,datas.shape[1]//2:]]
-        
+
         classify_model.fit(data = data, label=label, **learn_dict)
 
-    elif classification_method == "BSS": 
+    elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
-        
+
         lis = [getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = {key: [idx]}) for key, l in projection_dict.items() for idx in l]
-        
+
         weights = [1/len(l) for l in projection_dict.values() for _ in l]
-        
+
         classify_model = myClassifyModel(method = classification_method, print_more = print_more)
         classify_model.fit([w[0] for w in lis], [w[1] for w in lis], weights = weights, **learn_dict)
 
     else:
         classify_model = myClassifyModel(method = classification_method, print_more = print_more)
         data, labels = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
-        
+
         if project_along_mean_diff:
             data = project_data_along_axis(data, labels)
 
         classify_model.fit(data, labels)
-    
+
 
 
     res, lss = {}, {}
@@ -640,18 +646,18 @@ def mainResults(
             #     classify_model = myClassifyModel(method = method, print_more = print_more)
             #     classify_model.fit(*getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dic))
             data, label = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dic, split = ("train" if test_on_train else "test"))
-            
+
             if project_along_mean_diff:
                 data = project_data_along_axis(data, label)
-            
+
             method = classification_method if not no_train else "Random"
             if classification_method == "CCS":
                 data = [data[:,:data.shape[1]//2], data[:,data.shape[1]//2:]]
-            
+
             save_file = f"{save_file_prefix}/{key}{prompt_idx}_{method}.csv" if save_file_prefix else None
             if save_file:
                 os.makedirs(os.path.dirname(save_file), exist_ok=True)
-            
+
             acc, losses = classify_model.score(data, label, getloss = True, save_file=save_file)
             res[key].append(acc)
             lss[key].append(losses)
@@ -682,4 +688,4 @@ def printAcc(input_dic, verbose = 1):
     global_std = np.mean([100 * np.std(w) for w in input_dic.values()])
     if verbose >= 1:
         print("## Global accuracy: {:.2f}, std.: {:.2f}".format(global_acc, global_std))
-    return global_acc  
+    return global_acc
