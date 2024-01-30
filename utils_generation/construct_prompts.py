@@ -1,10 +1,10 @@
-import numpy as np
-import pandas as pd
 import random
-from promptsource.templates import DatasetTemplates
 from copy import deepcopy
 from functools import partial
 
+import numpy as np
+import pandas as pd
+from promptsource.templates import DatasetTemplates
 
 filter_length = 500
 
@@ -84,13 +84,13 @@ prompt_dict = {
         ["{}\nQuestion: Does this imply that \"{}\", yes or no?",
             ["premise", "hypothesis"]],
     ],
-    
+
 }
 
 
 confusion_prefix = {
 # confusion == 0, add nothing
-"normal": "{}",    
+"normal": "{}",
 # confusion == 1, add original thing. For agreement, `confusion1` is writen as `confusion``.
 "confusion": "\
 What is human life expectancy in the United States?\n\
@@ -295,7 +295,7 @@ class MyPrompts():
         # do not use the last four prompts
         return res if self.set_name != "copa" else res - 4
 
-    # qaexamples is tuple (qlist, alist), and these 5-len examples are fixed across the whole run. 
+    # qaexamples is tuple (qlist, alist), and these 5-len examples are fixed across the whole run.
     def apply(self, example, prompt_idx, candidate, qaexamples):
         '''
                 Candidate is a binary list with possible labels
@@ -415,7 +415,7 @@ def constructPrompt(set_name, frame, prompt_idx, mdl_name, tokenizer, max_num, c
             Will change according to model type, i.e. for Bert model will add [SEP] in the middle
             Return: A dataframe, with `null`, `0`, `1`, `label`, `selection`, which should be save with hidden states together
     '''
-    
+
     prompter = MyPrompts(set_name)
 
     result = {
