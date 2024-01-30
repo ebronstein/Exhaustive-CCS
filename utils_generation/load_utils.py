@@ -1,50 +1,68 @@
+import os
+from contextlib import contextmanager
+from tempfile import TemporaryDirectory
+
+import pandas as pd
 from numpy import longdouble
 from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    T5ForConditionalGeneration,
-    GPTNeoForCausalLM,
     AutoConfig,
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
+    AutoModelForSeq2SeqLM,
+    AutoModelForSequenceClassification,
+    AutoModelWithLMHead,
+    AutoTokenizer,
     GPT2LMHeadModel,
     GPT2Tokenizer,
-    AutoModel,
-    AutoModelForSeq2SeqLM,
-    AutoModelForMaskedLM,
-    AutoModelWithLMHead,
-    AutoModelForSequenceClassification
+    GPTNeoForCausalLM,
+    T5ForConditionalGeneration,
 )
-import os
-import pandas as pd
+
 from datasets import load_dataset
-from utils_generation.construct_prompts import constructPrompt, MyPrompts
-from utils_generation.save_utils import saveFrame, getDir
+from utils_generation.construct_prompts import MyPrompts, constructPrompt
+from utils_generation.save_utils import getDir, saveFrame
+
+
+@contextmanager
+def prevent_name_conflicts():
+    """Temporarily change cwd to a temporary directory, to prevent name conflicts."""
+    with TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp)
+            yield
+        finally:
+            os.chdir(old_cwd)
 
 
 def loadModel(mdl_name, cache_dir, parallelize):
     print("-------- model and tokenizer --------")
     print("loading model and tokenizer. model name = {}, cache_dir = {}".format(
         mdl_name, cache_dir))
-    if mdl_name in ["gpt-neo-2.7B", "gpt-j-6B"]:
-        model = AutoModelForCausalLM.from_pretrained("EleutherAI/{}".format(mdl_name))
-        tokenizer = AutoTokenizer.from_pretrained("EleutherAI/{}".format(mdl_name))
-    elif mdl_name in ["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"]:
-        model = GPT2LMHeadModel.from_pretrained(mdl_name)
-        tokenizer = GPT2Tokenizer.from_pretrained(mdl_name)
-    elif "T0" in mdl_name:
-        model = AutoModelForSeq2SeqLM.from_pretrained("bigscience/{}".format(mdl_name))
-        tokenizer = AutoTokenizer.from_pretrained("bigscience/{}".format(mdl_name))
-    elif "unifiedqa" in mdl_name:
-        model = T5ForConditionalGeneration.from_pretrained("allenai/" + mdl_name)
-        tokenizer = AutoTokenizer.from_pretrained("allenai/" + mdl_name)
-    elif "deberta" in mdl_name:
-        model = AutoModelForSequenceClassification.from_pretrained("microsoft/{}".format(mdl_name))
-        tokenizer = AutoTokenizer.from_pretrained("microsoft/" + mdl_name)
-    elif "roberta" in mdl_name:
-        model = AutoModelForSequenceClassification.from_pretrained(mdl_name)
-        tokenizer = AutoTokenizer.from_pretrained(mdl_name)
-    elif "t5" in mdl_name:
-        model = AutoModelWithLMHead.from_pretrained(mdl_name)
-        tokenizer = AutoTokenizer.from_pretrained(mdl_name)
+
+    with prevent_name_conflicts():
+        if mdl_name in ["gpt-neo-2.7B", "gpt-j-6B"]:
+            model = AutoModelForCausalLM.from_pretrained("EleutherAI/{}".format(mdl_name))
+            tokenizer = AutoTokenizer.from_pretrained("EleutherAI/{}".format(mdl_name))
+        elif mdl_name in ["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"]:
+            model = GPT2LMHeadModel.from_pretrained(mdl_name)
+            tokenizer = GPT2Tokenizer.from_pretrained(mdl_name)
+        elif "T0" in mdl_name:
+            model = AutoModelForSeq2SeqLM.from_pretrained("bigscience/{}".format(mdl_name))
+            tokenizer = AutoTokenizer.from_pretrained("bigscience/{}".format(mdl_name))
+        elif "unifiedqa" in mdl_name:
+            model = T5ForConditionalGeneration.from_pretrained("allenai/" + mdl_name)
+            tokenizer = AutoTokenizer.from_pretrained("allenai/" + mdl_name)
+        elif "x" in mdl_name:
+            model = AutoModelForSequenceClassification.from_pretrained("microsoft/{}".format(mdl_name))
+            tokenizer = AutoTokenizer.from_pretrained("microsoft/" + mdl_name)
+        elif "roberta" in mdl_name:
+            model = AutoModelForSequenceClassification.from_pretrained(mdl_name)
+            tokenizer = AutoTokenizer.from_pretrained(mdl_name)
+        elif "t5" in mdl_name:
+            model = AutoModelWithLMHead.from_pretrained(mdl_name)
+            tokenizer = AutoTokenizer.from_pretrained(mdl_name)
 
     model.eval()
 
@@ -56,7 +74,7 @@ def loadModel(mdl_name, cache_dir, parallelize):
         model = model.to("cuda")
 
     print("{} loaded.".format(mdl_name))
-    
+
     print("-------- model and tokenizer --------")
 
     return model, tokenizer
@@ -70,7 +88,7 @@ def get_sample_data(set_name, data_list, total_num):
     '''
 
     lbl_tag = "label" if set_name != "story-cloze" else "answer_right_ending"
-    
+
     label_set = set(data_list[0][lbl_tag].to_list())
     label_num = len(label_set)
     data_num_lis = get_balanced_num(
@@ -185,14 +203,14 @@ def loadDatasets(args, tokenizer):
         path = os.path.join(
             base_dir, "rawdata_{}_{}.csv".format(set_name, max_num))
 
-                
+
         # load datasets
         # if complete dataset exists and reload == False, will directly load this dataset
         # Otherwise, load existing raw dataset or reload / load new raw sets
         # notice that this is just the `raw data`, which is a dict or whatever
         dataset_name_w_num = "{}_{}_prompt{}".format(set_name, max_num, prompt_idx)
         complete_path = getDir(dataset_name_w_num, args)
-        
+
         if reload == False and os.path.exists(os.path.join(complete_path, "frame.csv")):
             frame = pd.read_csv(os.path.join(complete_path, "frame.csv"), converters={"selection": eval})
             frame_dict[dataset_name_w_num] = frame
