@@ -8,3 +8,4 @@ sentencepiece==0.1.99
 torch==1.11.0
 transformers==4.21.3
 umap==0.1.1
+protobuf==3.20.*
