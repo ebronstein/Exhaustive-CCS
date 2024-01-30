@@ -1,7 +1,8 @@
+import json
 import os
+
 import numpy as np
 import pandas as pd
-import json
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -28,7 +29,7 @@ def set_load_dir(path):
 def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idx):
     length = len(mdl)
     filter = [w for w in os.listdir(load_dir) if (mdl == w[:length] and mdl + "_" in w and set_name + "_" in w and str(data_num) + "_" in w and confusion + "_" in w and place in w)]
-    if prompt_idx is not None:     
+    if prompt_idx is not None:
         filter = [w for w in filter if int(w.split("_")[3][6:]) in prompt_idx]
     return [os.path.join(load_dir, w) for w in filter]
 
@@ -55,28 +56,36 @@ def normalize(data, scale =True, demean = True):
     return data / avgnorm * np.sqrt(data.shape[1])
 
 def loadHiddenStates(mdl, set_name, load_dir, promtpt_idx, location = "encoder", layer = -1, data_num = 1000, confusion = "normal", place = "last", scale = True, demean = True, mode = "minus", verbose = True):
-    '''
-        Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
-        if mode == minus, then get h - h'
-        if mode == concat, then get np.concatenate([h,h'])
-        elif mode == 0 or 1, then get h or h'
-    '''
+    '''Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
 
+    if mode == minus, then get h - h'
+    if mode == concat, then get np.concatenate([h,h'])
+    elif mode == 0 or 1, then get h or h'
+
+    Raises:
+        ValueError: If no hidden states are found.
+    '''
     dir_list = getDirList(mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx)
+    if not dir_list:
+        raise ValueError(
+            "No hidden states found for {} {} {} {} {} {} {}".format(
+                mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx))
+
     append_list = ["_" + location + str(layer) for _ in dir_list]
-    
+
     hidden_states = [
                         organizeStates(
-                            [np.load(os.path.join(w, "0{}.npy".format(app))), 
-                            np.load(os.path.join(w, "1{}.npy".format(app)))], 
-                            mode = mode) 
+                            [np.load(os.path.join(w, "0{}.npy".format(app))),
+                            np.load(os.path.join(w, "1{}.npy".format(app)))],
+                            mode = mode)
                         for w, app in zip(dir_list, append_list)
                     ]
 
     # normalize
     hidden_states = [normalize(w, scale, demean) for w in hidden_states]
-    if verbose:        
-        print("{} prompts for {}, with shape {}".format(len(hidden_states), set_name, hidden_states[0].shape))
+    if verbose:
+        hs_shape = hidden_states[0].shape if hidden_states else "None"
+        print("{} prompts for {}, with shape {}".format(len(hidden_states), set_name, hs_shape))
     labels = [np.array(pd.read_csv(os.path.join(w, "frame.csv"))["label"].to_list()) for w in dir_list]
 
     return [(u,v) for u,v in zip(hidden_states, labels)]
@@ -87,23 +96,23 @@ def getPermutation(data_list, rate = 0.6):
     return [permutation[: int(length * rate)], permutation[int(length * rate):]]
 
 
-print("------ Func: getDic ------\n\
-## Input = (mdl_name, dataset_list, prefix = \"normal\", location=\"encoder\", layer=-1, scale = True, demean = True, mode = \"minus\", verbose = True) ##\n\
-    mdl_name: name of the model\n\
-    dataset_list: list of all datasets\n\
-    prefix: the prefix used for the hidden states\n\
-    location: Either 'encoder' or 'decoder'. Determine which hidden states to load.\n\
-    layer: An index representing which layer in `location` should we load the hidden state from.\n\
-    prompt_dict: dict of prompts to consider. Default is taking all prompts (empty dict). Key is the set name and value is an index list. Only return hiiden states from corresponding prompts.\n\
-    data_num: population of the dataset. Default is 1000, and it depends on generation process.\n\
-    scale: whether to rescale the whole dataset\n\
-    demean: whether to subtract the mean\n\
-    mode: how to generate hidden states from h and h'\n\
-    verbose: Whether to print more\n\
-## Output = [data_dict, permutation_dict] ##\n\
-    data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label). state has shape (#data * #dim), and label has shape (#data).\n\
-    permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.\n\
-")
+# print("------ Func: getDic ------\n\
+# ## Input = (mdl_name, dataset_list, prefix = \"normal\", location=\"encoder\", layer=-1, scale = True, demean = True, mode = \"minus\", verbose = True) ##\n\
+#     mdl_name: name of the model\n\
+#     dataset_list: list of all datasets\n\
+#     prefix: the prefix used for the hidden states\n\
+#     location: Either 'encoder' or 'decoder'. Determine which hidden states to load.\n\
+#     layer: An index representing which layer in `location` should we load the hidden state from.\n\
+#     prompt_dict: dict of prompts to consider. Default is taking all prompts (empty dict). Key is the set name and value is an index list. Only return hiiden states from corresponding prompts.\n\
+#     data_num: population of the dataset. Default is 1000, and it depends on generation process.\n\
+#     scale: whether to rescale the whole dataset\n\
+#     demean: whether to subtract the mean\n\
+#     mode: how to generate hidden states from h and h'\n\
+#     verbose: Whether to print more\n\
+# ## Output = [data_dict, permutation_dict] ##\n\
+#     data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label). state has shape (#data * #dim), and label has shape (#data).\n\
+#     permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.\n\
+# ")
 def getDic(mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
     global load_dir
     if location == "auto":
@@ -131,11 +140,11 @@ def get_zeros_acc(csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, 
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
     subzeros = zeros.loc[(zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)]
-    
+
     # Extend prompt_dict to ALL dict if it is None
     if prompt_dict is None:
         prompt_dict = {key: range(1000) for key in dataset_list}
-    
+
     # Extract accuracy, each key is a set name and value is a list of acc
     acc_dict = {}
     for dataset in dataset_list:
