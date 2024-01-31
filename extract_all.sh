@@ -18,6 +18,8 @@ model_to_short=(deberta)
 test_on_trains=("" "--test_on_train")
 test_on_train_extensions=("" "/test_on_train")
 
+NUM_SEEDS=10
+
 for i_test_on_train in 0 1; do
     for ((i_model=0; i_model<${#model_names[@]}; i_model++)); do
         model=${model_names[$i_model]}
@@ -25,7 +27,7 @@ for i_test_on_train in 0 1; do
         short=${model_to_short[$i_model]}
         test_on_train=${test_on_trains[$i_test_on_train]}
         test_on_train_extension=${test_on_train_extensions[$i_test_on_train]}
-        for seed in {0..9}; do
+        for (( seed=0; seed<NUM_SEEDS; seed++ )); do
             # if seed == 0, save states
             save_states=""
             if [ $seed -eq 0 ]; then
@@ -42,7 +44,7 @@ done
 methods="CCS LR Random"
 prefixes=("normal-dot" "normal-thatsright" "normal-mark")
 layers=(-1 -5 -9)
-save_dir_per_layer=("", "layer-5", "layer-9")
+save_dir_per_layer=("" "layer-5" "layer-9")
 for i_layer in 1 2; do
     layer=${layers[$i_layer]}
     save_dir=${save_dir_per_layer[$i_layer]}
@@ -51,7 +53,7 @@ for i_layer in 1 2; do
             model=${model_names[$i_model]}
             ds=${!model_to_ds[$i_model]}
             short=${model_to_short[$i_model]}
-            for seed in {0..9}; do
+            for (( seed=0; seed<NUM_SEEDS; seed++ )); do
                 # if seed == 0, save states
                 save_states=""
                 if [ $seed -eq 0 ]; then
@@ -63,15 +65,17 @@ for i_layer in 1 2; do
     done
 done
 
-# RRCS
+# RCCS
 
 RCCS_STRING=$(printf "RCCS%s " $(seq 0 19))
+
+NUM_SEEDS_RCCS=5
 
 for ((i_model=0; i_model<${#model_names[@]}; i_model++)); do
     model=${model_names[$i_model]}
     ds=${!model_to_ds[$i_model]}
     short=${model_to_short[$i_model]}
-    for seed in {0..4}; do
+    for (( seed=0; seed<NUM_SEEDS_RCCS; seed++ )); do
         # if seed == 0, save states
         save_states=""
         if [ $seed -eq 0 ]; then
