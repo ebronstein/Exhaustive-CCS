@@ -375,7 +375,7 @@ def concatAnswer(question, ans, mdl_name, confusion):
     if "-" in confusion:
         confusion, suffix = confusion.split("-")
     else:
-        suffix = ""
+        suffix = None
 
     if confusion != "normal":
         if question[-1] == " ":
@@ -393,7 +393,8 @@ def concatAnswer(question, ans, mdl_name, confusion):
     if ans == "":  # null one, don't do anything
         return question
 
-    ans += confusion_suffix[suffix]
+    if suffix is not None:
+        ans += confusion_suffix[suffix]
 
     # for bert model, should add [SEP]
     if 'deberta' in mdl_name:
