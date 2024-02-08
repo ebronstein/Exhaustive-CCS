@@ -15,16 +15,7 @@ registered_prefix = global_dict["registered_prefix"]
 models_layer_num = global_dict["models_layer_num"]
 
 
-
 load_dir = "./generation_results"
-# print("------ Func: set_load_dir ------\n\
-# ## Input = (path) ##\n\
-#     path: set the dir that loads hidden states to path.\n\
-# [ATTENTION]: Only load the first 4 prompts for speed.\n\
-# ")
-def set_load_dir(path):
-    global load_dir
-    load_dir = path
 
 def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idx):
     length = len(mdl)
@@ -113,8 +104,7 @@ def getPermutation(data_list, rate = 0.6):
 #     data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label). state has shape (#data * #dim), and label has shape (#data).\n\
 #     permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.\n\
 # ")
-def getDic(mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
-    global load_dir
+def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
     if location == "auto":
         location = "decoder" if "gpt" in mdl_name else "encoder"
     if location == "decoder" and layer < 0:
@@ -136,7 +126,7 @@ def getDic(mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1,
 # ## Output = number / dict, depending on `avg`\n\
 # "
 # )
-def get_zeros_acc(csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False):
+def get_zeros_acc(load_dir, csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False):
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
     subzeros = zeros.loc[(zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)]

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from utils_extraction.func_utils import adder, getAvg
-from utils_extraction.load_utils import get_zeros_acc, getDic, set_load_dir
+from utils_extraction.load_utils import get_zeros_acc, getDic
 from utils_extraction.method_utils import mainResults
 
 ######## JSON Load ########
@@ -58,7 +58,6 @@ parser.add_argument(
 args = parser.parse_args()
 
 dataset_list = args.datasets
-set_load_dir(args.load_dir)
 assert args.test != "testone", NotImplementedError("Current extraction program does not support applying method on prompt-specific level.")
 
 if args.location == "auto":
@@ -121,6 +120,7 @@ if __name__ == "__main__":
             rawzeros = pd.read_csv(os.path.join(args.load_dir, "{}.csv".format(args.zero)))
             # Get the global zero acc dict (setname, [acc])
             zeros_acc = get_zeros_acc(
+                args.load_dir,
                 csv_name = args.zero,
                 mdl_name = model,
                 dataset_list = dataset_list,
@@ -161,6 +161,7 @@ if __name__ == "__main__":
             mode = args.mode if args.mode != "auto" else ("concat" if method_use_concat else "minus")
             # load the data_dict and permutation_dict
             data_dict, permutation_dict = getDic(
+                args.load_dir,
                 mdl_name= model,
                 dataset_list=dataset_list,
                 prefix = global_prefix,
