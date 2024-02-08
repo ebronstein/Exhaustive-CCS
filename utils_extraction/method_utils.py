@@ -218,8 +218,8 @@ class ConsistencyMethod(object):
 
         if getloss:
             losses = [l.cpu().detach().item() for l in self.get_losses(torch.tensor(p0), torch.tensor(p1))]
-            return max(acc, 1 - acc), losses
-        return max(acc, 1 - acc)
+            return acc, losses
+        return acc
 
 
     def train(self):
