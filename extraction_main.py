@@ -14,6 +14,7 @@ import pandas as pd
 from utils_extraction.func_utils import adder, getAvg
 from utils_extraction.load_utils import get_zeros_acc, getDic
 from utils_extraction.method_utils import mainResults
+from utils_generation.save_utils import maybeAppendProjectSuffix, saveParams
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -75,10 +76,7 @@ def methodHasLoss(method):
     return method in ["BSS", "CCS"] or method.startswith("RCCS")
 
 
-def saveParams(name, coef, intercept):
-    path = os.path.join(args.save_dir, "params")
-    np.save(os.path.join(path, "coef_{}.npy".format(name)), coef)
-    np.save(os.path.join(path, "intercept_{}.npy".format(name)), intercept)
+
 
 def saveCsv(csv, prefix, str = ""):
     dir = os.path.join(args.save_dir, "{}_{}_{}.csv".format(args.model, prefix, args.seed))
@@ -151,10 +149,7 @@ if __name__ == "__main__":
             if project_along_mean_diff:
                 method = method.replace("-md", "")
 
-            def maybeAppendProjectSuffix(method):
-                if project_along_mean_diff:
-                    return method + "-md"
-                return method
+
 
             method_use_concat = (method in {"CCS", "Random"}) or method.startswith("RCCS")
 
@@ -180,7 +175,7 @@ if __name__ == "__main__":
                 n_components = 1 if method == "TPC" else -1
 
                 save_file_prefix = (
-                    f"{args.save_dir}/states_{args.model}_{maybeAppendProjectSuffix(method)}/{train_set}"
+                    f"{args.save_dir}/states_{args.model}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}/{train_set}"
                     if args.save_states
                     else None
                 )
@@ -190,7 +185,7 @@ if __name__ == "__main__":
                 if method.startswith("RCCS"):
                     method_ = "CCS"
                     params_file_name = "{}_{}_{}_{}_{}_{}".format(
-                        model, global_prefix, maybeAppendProjectSuffix("RCCS"), "all", train_set, args.seed
+                        model, global_prefix, maybeAppendProjectSuffix("RCCS", project_along_mean_diff), "all", train_set, args.seed
                     )
                     if method != "RCCS0":
                         constraints = np.load(
@@ -229,8 +224,9 @@ if __name__ == "__main__":
                     else:
                         assert False
                     saveParams(
+                        args.save_dir,
                         "{}_{}_{}_{}_{}_{}".format(
-                            model, global_prefix, maybeAppendProjectSuffix(method), "all", train_set, args.seed
+                            model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, args.seed
                         ),
                         coef,
                         bias,
@@ -243,17 +239,17 @@ if __name__ == "__main__":
                     if method != "RCCS0":
                         coef = np.concatenate([constraints, coef], axis=0)
                         bias = np.concatenate([old_biases, bias], axis=0)
-                    saveParams(params_file_name, coef, bias)
+                    saveParams(args.save_dir, params_file_name, coef, bias)
 
                 acc, std, loss, sim_loss, cons_loss = getAvg(res), np.mean([np.std(lis) for lis in res.values()]), *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0)
                 print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}".format(
-                    maybeAppendProjectSuffix(method), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss)
+                    maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss)
                 )
 
                 for key in dataset_list:
                     if args.prompt_save_level == "all":
                         loss, sim_loss, cons_loss = np.mean(lss[key], axis=0) if methodHasLoss(method) else ("", "", "")
-                        csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method), "all", train_set, key,
+                        csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, key,
                                     accuracy = np.mean(res[key]),
                                     std = np.std(res[key]),
                                     location = args.location,
@@ -263,7 +259,7 @@ if __name__ == "__main__":
                     else:
                         loss, sim_loss, cons_loss = lss[key][idx] if methodHasLoss(method) else ("", "", "")
                         for idx in range(len(res[key])):
-                            csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method), idx, train_set, key,
+                            csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), idx, train_set, key,
                                         accuracy = res[key][idx],
                                         std = "",
                                         location = args.location,
@@ -271,4 +267,4 @@ if __name__ == "__main__":
                                         loss = loss, sim_loss = sim_loss, cons_loss = cons_loss,
                                         )
 
-        saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method)))
+        saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))
