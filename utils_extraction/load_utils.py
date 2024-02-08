@@ -17,11 +17,11 @@ models_layer_num = global_dict["models_layer_num"]
 
 
 load_dir = "./generation_results"
-print("------ Func: set_load_dir ------\n\
-## Input = (path) ##\n\
-    path: set the dir that loads hidden states to path.\n\
-[ATTENTION]: Only load the first 4 prompts for speed.\n\
-")
+# print("------ Func: set_load_dir ------\n\
+# ## Input = (path) ##\n\
+#     path: set the dir that loads hidden states to path.\n\
+# [ATTENTION]: Only load the first 4 prompts for speed.\n\
+# ")
 def set_load_dir(path):
     global load_dir
     load_dir = path
@@ -125,17 +125,17 @@ def getDic(mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1,
     permutation_dict = {set_name: getPermutation(data_dict[set_name]) for set_name in dataset_list}
     return data_dict, permutation_dict
 
-print("------ Func: get_zeros_acc ------\n\
-## Input = csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False\n\
-    csv_name: The name of csv we get accuracy from.\n\
-    mdl_name: The name of the model.\n\
-    dataset_list: List of dataset you want the accuracy from.\n\
-    prefix: The name of prefix.\n\
-    prompt_dict: Same as in getDir(). You can specify which prompt to get using this variable. Default is None, i.e. get all prompts.\n\
-    avg: Whether to average upon return. If True, will return a numbers, otherwise a dict with key from dataset_list and values being a list of accuracy.\n\
-## Output = number / dict, depending on `avg`\n\
-"
-)
+# print("------ Func: get_zeros_acc ------\n\
+# ## Input = csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False\n\
+#     csv_name: The name of csv we get accuracy from.\n\
+#     mdl_name: The name of the model.\n\
+#     dataset_list: List of dataset you want the accuracy from.\n\
+#     prefix: The name of prefix.\n\
+#     prompt_dict: Same as in getDir(). You can specify which prompt to get using this variable. Default is None, i.e. get all prompts.\n\
+#     avg: Whether to average upon return. If True, will return a numbers, otherwise a dict with key from dataset_list and values being a list of accuracy.\n\
+# ## Output = number / dict, depending on `avg`\n\
+# "
+# )
 def get_zeros_acc(csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False):
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
