@@ -87,24 +87,26 @@ def getPermutation(data_list, rate = 0.6):
     return [permutation[: int(length * rate)], permutation[int(length * rate):]]
 
 
-# print("------ Func: getDic ------\n\
-# ## Input = (mdl_name, dataset_list, prefix = \"normal\", location=\"encoder\", layer=-1, scale = True, demean = True, mode = \"minus\", verbose = True) ##\n\
-#     mdl_name: name of the model\n\
-#     dataset_list: list of all datasets\n\
-#     prefix: the prefix used for the hidden states\n\
-#     location: Either 'encoder' or 'decoder'. Determine which hidden states to load.\n\
-#     layer: An index representing which layer in `location` should we load the hidden state from.\n\
-#     prompt_dict: dict of prompts to consider. Default is taking all prompts (empty dict). Key is the set name and value is an index list. Only return hiiden states from corresponding prompts.\n\
-#     data_num: population of the dataset. Default is 1000, and it depends on generation process.\n\
-#     scale: whether to rescale the whole dataset\n\
-#     demean: whether to subtract the mean\n\
-#     mode: how to generate hidden states from h and h'\n\
-#     verbose: Whether to print more\n\
-# ## Output = [data_dict, permutation_dict] ##\n\
-#     data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label). state has shape (#data * #dim), and label has shape (#data).\n\
-#     permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.\n\
-# ")
 def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
+    """Loads hidden states and labels.
+
+    Args:
+        mdl_name: name of the model
+        dataset_list: list of all datasets
+        prefix: the prefix used for the hidden states
+        location: Either 'encoder' or 'decoder'. Determine which hidden states to load.
+        layer: An index representing which layer in `location` should we load the hidden state from.
+        prompt_dict: dict of prompts to consider. Default is taking all prompts (empty dict). Key is the set name and value is an index list. Only return hiiden states from corresponding prompts.
+        data_num: population of the dataset. Default is 1000, and it depends on generation process.
+        scale: whether to rescale the whole dataset
+        demean: whether to subtract the mean
+        mode: how to generate hidden states from h and h'
+        verbose: Whether to print more
+
+    Returns: Tuple (data_dict, permutation_dict):
+        data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label) corresponding to a prompt. State has shape (#data * #dim), and label has shape (#data). For example, data_dict["imdb"][0][0] contains the hidden states for the first prompt for the imdb dataset.
+        permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.
+    """
     if location == "auto":
         location = "decoder" if "gpt" in mdl_name else "encoder"
     if location == "decoder" and layer < 0:
