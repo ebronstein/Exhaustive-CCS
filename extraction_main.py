@@ -2,17 +2,18 @@ import warnings
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
-import os
-import pandas as pd
-import numpy as np
-import time
-from utils_extraction.load_utils import getDic, set_load_dir, get_zeros_acc
-from utils_extraction.method_utils import mainResults
-from utils_extraction.func_utils import getAvg, adder
-import pandas as pd
-import random 
-import json
 import argparse
+import json
+import os
+import random
+import time
+
+import numpy as np
+import pandas as pd
+
+from utils_extraction.func_utils import adder, getAvg
+from utils_extraction.load_utils import get_zeros_acc, getDic, set_load_dir
+from utils_extraction.method_utils import mainResults
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -105,7 +106,7 @@ if __name__ == "__main__":
         # shorten the name
         model = args.model
         data_num = args.data_num
-    
+
         # Start calculate numbers
         # std is over all prompts within this dataset
         if not args.append:
@@ -127,12 +128,12 @@ if __name__ == "__main__":
             )
             for setname in dataset_list:
                 if args.prompt_save_level == "all":
-                    csv = adder(csv, model, global_prefix, "0-shot", "", "", setname, 
+                    csv = adder(csv, model, global_prefix, "0-shot", "", "", setname,
                             np.mean(zeros_acc[setname]),
                             np.std(zeros_acc[setname]),"","","")
                 else:   # For each prompt, save one line
                     for idx in range(len(zeros_acc[setname])):
-                        csv = adder(csv, model, global_prefix, "0-shot", 
+                        csv = adder(csv, model, global_prefix, "0-shot",
                                     prompt_level= idx, train= "", test = setname,
                                     accuracy = zeros_acc[setname][idx],
                                     std = "", location = "", layer = "", loss = "",
@@ -145,7 +146,7 @@ if __name__ == "__main__":
             if method == "0-shot":
                 continue
             print("-------- method = {} --------".format(method))
-            
+
             project_along_mean_diff = "-md" in method or args.project_along_mean_diff
             if project_along_mean_diff:
                 method = method.replace("-md", "")
@@ -160,7 +161,7 @@ if __name__ == "__main__":
             mode = args.mode if args.mode != "auto" else ("concat" if method_use_concat else "minus")
             # load the data_dict and permutation_dict
             data_dict, permutation_dict = getDic(
-                mdl_name= model, 
+                mdl_name= model,
                 dataset_list=dataset_list,
                 prefix = global_prefix,
                 location = args.location,
@@ -201,11 +202,11 @@ if __name__ == "__main__":
                 # return a dict with the same shape as test_dict
                 # for each key test_dict[key] is a unitary list
                 res, lss, pmodel, cmodel = mainResults(
-                    data_dict = data_dict, 
-                    permutation_dict = permutation_dict, 
+                    data_dict = data_dict,
+                    permutation_dict = permutation_dict,
                     projection_dict = projection_dict,
-                    test_dict = test_dict, 
-                    n_components = n_components, 
+                    test_dict = test_dict,
+                    n_components = n_components,
                     projection_method = "PCA",
                     classification_method = method_,
                     save_file_prefix=save_file_prefix,
@@ -242,7 +243,7 @@ if __name__ == "__main__":
                         coef = np.concatenate([constraints, coef], axis=0)
                         bias = np.concatenate([old_biases, bias], axis=0)
                     saveParams(params_file_name, coef, bias)
-                
+
                 acc, std, loss, sim_loss, cons_loss = getAvg(res), np.mean([np.std(lis) for lis in res.values()]), *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0)
                 print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}".format(
                     maybeAppendProjectSuffix(method), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss)
@@ -270,5 +271,3 @@ if __name__ == "__main__":
                                         )
 
         saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method)))
-
-    
