@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -150,3 +151,14 @@ def get_zeros_acc(load_dir, csv_name, mdl_name, dataset_list, prefix, prompt_dic
     else:
         # get the dataset avg, and finally the global level avg
         return np.mean([np.mean(values) for values in acc_dict.values()])
+
+
+def load_params(save_dir, name) -> tuple[np.ndarray, Optional[np.ndarray]]:
+    path = os.path.join(save_dir, "params")
+    coef_path = os.path.join(path, "coef_{}.npy".format(name))
+    intercept_path = os.path.join(path, "intercept_{}.npy".format(name))
+    if not os.path.exists(coef_path):
+        raise FileNotFoundError("No params found for {}".format(name))
+    coef = np.load(coef_path)
+    intercept = np.load(intercept_path) if os.path.exists(intercept_path) else None
+    return coef, intercept
