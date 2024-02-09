@@ -14,7 +14,11 @@ import pandas as pd
 from utils_extraction.func_utils import adder, getAvg
 from utils_extraction.load_utils import get_zeros_acc, getDic
 from utils_extraction.method_utils import mainResults
-from utils_generation.save_utils import maybeAppendProjectSuffix, saveParams
+from utils_generation.save_utils import (
+    make_params_filename,
+    maybeAppendProjectSuffix,
+    saveParams,
+)
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -44,12 +48,16 @@ parser.add_argument("--mode", type = str, default = "auto", choices = ["auto", "
 parser.add_argument("--save_dir", type = str, default = "extraction_results", help = "where the csv and params are saved")
 parser.add_argument("--append", action="store_true", help = "Whether to append content in frame rather than rewrite.")
 parser.add_argument("--load_dir", type = str, default = "generation_results", help = "Where the hidden states and zero-shot accuracy are loaded.")
+parser.add_argument("--load_classifier", action="store_true", help = "Whether to load the classifier.")
 parser.add_argument("--location", type = str, default = "auto")
 parser.add_argument("--layer", type = int, default = -1)
 parser.add_argument("--zero", type = str, default = "generation_results")
 parser.add_argument("--seed", type = int, default = 0)
 parser.add_argument("--prompt_save_level", default = "all", choices = ["single", "all"])
 parser.add_argument("--save_states", action="store_true", help="Whether to save the p0, p1, labels.")
+parser.add_argument("--save_params", dest="save_params", action="store_true", default=True, help="Whether to save the parameters.")
+parser.add_argument("--no_save_params", dest="save_params", action="store_false", help="Whether to save the parameters.")
+parser.add_argument("--no_save_results", action="store_true", help="Whether to save the results in a CSV file.")
 parser.add_argument("--test_on_train", action="store_true", help="Whether to test on the train set.")
 parser.add_argument(
     "--project_along_mean_diff",
@@ -138,7 +146,8 @@ if __name__ == "__main__":
                                     sim_loss = "", cons_loss = "")
 
 
-            saveCsv(csv, global_prefix, "After calculating zeroshot performance.")
+            if not args.no_save_results:
+                saveCsv(csv, global_prefix, "After calculating zeroshot performance.")
 
         for method in args.method_list:
             if method == "0-shot":
@@ -180,13 +189,19 @@ if __name__ == "__main__":
                     else None
                 )
 
+                method_str = "CCS" if method.startswith("RCCS") else method
+                params_file_name = make_params_filename(
+                    model,
+                    global_prefix,
+                    maybeAppendProjectSuffix(method_str, project_along_mean_diff),
+                    train_set,
+                    args.seed,
+                )
+
                 method_ = method
                 constraints = None
                 if method.startswith("RCCS"):
                     method_ = "CCS"
-                    params_file_name = "{}_{}_{}_{}_{}_{}".format(
-                        model, global_prefix, maybeAppendProjectSuffix("RCCS", project_along_mean_diff), "all", train_set, args.seed
-                    )
                     if method != "RCCS0":
                         constraints = np.load(
                             os.path.join(args.save_dir, "params", "coef_{}.npy".format(params_file_name))
@@ -194,6 +209,8 @@ if __name__ == "__main__":
                         old_biases = np.load(
                             os.path.join(args.save_dir, "params", "intercept_{}.npy".format(params_file_name))
                         )
+
+                load_classifier_dir_and_name = (args.save_dir, params_file_name) if args.load_classifier else None
 
                 # return a dict with the same shape as test_dict
                 # for each key test_dict[key] is a unitary list
@@ -204,6 +221,7 @@ if __name__ == "__main__":
                     test_dict = test_dict,
                     n_components = n_components,
                     projection_method = "PCA",
+                    load_classifier_dir_and_name=load_classifier_dir_and_name,
                     classification_method = method_,
                     save_file_prefix=save_file_prefix,
                     test_on_train=args.test_on_train,
@@ -216,21 +234,19 @@ if __name__ == "__main__":
                     if method in ["TPC", "BSS"]:
                         coef, bias = cmodel.coef_ @ pmodel.getDirection(), cmodel.intercept_
                     elif method in ["CCS", "Random"]:
-                        coef_and_bias = cmodel.best_theta
-                        coef = coef_and_bias[:, :-1]
-                        bias = coef_and_bias[:, -1]
+                        coef = cmodel.coef
+                        bias = cmodel.bias
                     elif method == "LR":
                         coef, bias = cmodel.coef_, cmodel.intercept_
                     else:
                         assert False
-                    saveParams(
-                        args.save_dir,
-                        "{}_{}_{}_{}_{}_{}".format(
-                            model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, args.seed
-                        ),
-                        coef,
-                        bias,
-                    )
+                    if args.save_params:
+                        saveParams(
+                            args.save_dir,
+                            params_file_name,
+                            coef,
+                            bias,
+                        )
 
                 if method.startswith("RCCS"):
                     coef_and_bias = cmodel.best_theta
@@ -239,7 +255,8 @@ if __name__ == "__main__":
                     if method != "RCCS0":
                         coef = np.concatenate([constraints, coef], axis=0)
                         bias = np.concatenate([old_biases, bias], axis=0)
-                    saveParams(args.save_dir, params_file_name, coef, bias)
+                    if args.save_params:
+                        saveParams(args.save_dir, params_file_name, coef, bias)
 
                 acc, std, loss, sim_loss, cons_loss = getAvg(res), np.mean([np.std(lis) for lis in res.values()]), *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0)
                 print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}".format(
@@ -267,4 +284,5 @@ if __name__ == "__main__":
                                         loss = loss, sim_loss = sim_loss, cons_loss = cons_loss,
                                         )
 
-        saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))
+        if not args.no_save_results:
+            saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))

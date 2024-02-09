@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,6 +10,8 @@ import umap
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+
+from utils_extraction import load_utils
 
 
 class myReduction():
@@ -139,7 +142,7 @@ class ConsistencyMethod(object):
         no_train: whether to train the linear model (otherwise just return randomly initialized weights)
         constraints: an optional matrix of shape (n_directions, n_features)*
             of unormalized but orthogonal directions which the linear model should be orthogonal to"""
-        self.includa_bias = include_bias
+        self.include_bias = include_bias
         self.verbose = verbose
         self.no_train = no_train
         self.constraints = constraints
@@ -147,9 +150,46 @@ class ConsistencyMethod(object):
             self.constraints = normalize(self.constraints)
             assert_close_to_orthonormal(self.constraints)
 
+        self.best_theta = None
+        self.best_loss = None
+
+    @classmethod
+    def from_coef_and_bias(cls, coef, bias=None, **kwargs):
+        coef = np.asarray(coef)
+        if coef.ndim == 1:
+            coef = coef[None, :]
+        elif coef.ndim > 2:
+            raise ValueError(f"coef should have at most 2 dimensions, found {coef.ndim}")
+
+        if bias is not None:
+            bias = np.asarray(bias)
+            if not (np.isscalar(bias) or bias.shape == (1,)):
+                raise ValueError(f"bias should be a scalar, found {bias}")
+
+        kwargs["include_bias"] = bias is not None
+        kwargs["no_train"] = False
+        instance = cls(**kwargs)
+
+        if bias is None:
+            theta = coef
+        else:
+            theta = np.concatenate([coef, bias[:, None]], axis=-1)
+        instance.best_theta = theta
+        return instance
+
+    @property
+    def coef(self) -> Optional[np.ndarray]:
+        return self.best_theta[:, :-1] if self.best_theta is not None else None
+
+    @property
+    def bias(self) -> Optional[float]:
+        if self.best_theta is None or not self.include_bias:
+            return None
+        return self.best_theta[:, -1]
+
 
     def add_ones_dimension(self, h):
-        if self.includa_bias:
+        if self.include_bias:
             return np.concatenate([h, np.ones(h.shape[0])[:, None]], axis=-1)
         else:
             return h
@@ -572,6 +612,7 @@ def mainResults(
     projection_method = "PCA",
     n_components = 2,           # The dimension you want to reduce to. -1 means no projection will be implemented.
     projection_only = False,
+    load_classifier_dir_and_name: Optional[tuple[str, str]] = None,  # Optional tuple (root_dir, name) containing the root directory and name of the classifier. If provided, will load the classifier's saved params from "root_dir/params" corresponding to "name". Otherwise, will train the classifier from scratch.
     classification_method = "BSS",                 # can be LR, TPC and BSS
     print_more = False,
     learn_dict = {},
@@ -605,15 +646,26 @@ def mainResults(
 
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
-    if classification_method == "CCS":
-        classify_model = ConsistencyMethod(verbose=print_more, no_train=no_train, constraints=constraints)
-        datas, label = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
-        assert len(datas.shape) == 2
-        if project_along_mean_diff:
-            datas = project_data_along_axis(datas, label)
-        data = [datas[:,:datas.shape[1]//2], datas[:,datas.shape[1]//2:]]
+    if load_classifier_dir_and_name is not None:
+        if print_more:
+            print("Loading classifier from", load_classifier_dir_and_name)
+        coef, bias = load_utils.load_params(*load_classifier_dir_and_name)
 
-        classify_model.fit(data = data, label=label, **learn_dict)
+    if classification_method == "CCS":
+        init_kwargs = dict(verbose=print_more,
+                           no_train=no_train,
+                           constraints=constraints)
+        if load_classifier_dir_and_name is not None:
+            classify_model = ConsistencyMethod.from_coef_and_bias(coef, bias, **init_kwargs)
+        else:
+            classify_model = ConsistencyMethod(**init_kwargs)
+            datas, label = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
+            assert len(datas.shape) == 2
+            if project_along_mean_diff:
+                datas = project_data_along_axis(datas, label)
+            data = [datas[:,:datas.shape[1]//2], datas[:,datas.shape[1]//2:]]
+
+            classify_model.fit(data = data, label=label, **learn_dict)
 
     elif classification_method == "BSS":
         if project_along_mean_diff:
