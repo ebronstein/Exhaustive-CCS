@@ -13,7 +13,7 @@ import pandas as pd
 
 from utils_extraction.func_utils import adder, getAvg
 from utils_extraction.load_utils import get_zeros_acc, getDic
-from utils_extraction.method_utils import mainResults
+from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation.save_utils import (
     make_params_filename,
     maybeAppendProjectSuffix,
@@ -49,6 +49,7 @@ parser.add_argument("--save_dir", type = str, default = "extraction_results", he
 parser.add_argument("--append", action="store_true", help = "Whether to append content in frame rather than rewrite.")
 parser.add_argument("--load_dir", type = str, default = "generation_results", help = "Where the hidden states and zero-shot accuracy are loaded.")
 parser.add_argument("--load_classifier", action="store_true", help = "Whether to load the classifier.")
+parser.add_argument("--params_load_dir", type = str, default = "extraction_results", help = "Directory from which the classifier model's parameters are loaded.")
 parser.add_argument("--location", type = str, default = "auto")
 parser.add_argument("--layer", type = int, default = -1)
 parser.add_argument("--zero", type = str, default = "generation_results")
@@ -64,6 +65,7 @@ parser.add_argument(
     action="store_true",
     help="Whether to project the data along the difference of means. You can also use the suffix -md in the method name.",
 )
+parser.add_argument("-v", "--verbose", action="store_true", help="Whether to print more verbose results.")
 args = parser.parse_args()
 
 dataset_list = args.datasets
@@ -86,8 +88,8 @@ def methodHasLoss(method):
 
 
 
-def saveCsv(csv, prefix, str = ""):
-    dir = os.path.join(args.save_dir, "{}_{}_{}.csv".format(args.model, prefix, args.seed))
+def saveCsv(csv, save_dir, prefix, str = ""):
+    dir = os.path.join(save_dir, "{}_{}_{}.csv".format(args.model, prefix, args.seed))
     csv.to_csv(dir, index = False)
     print("{} Saving to {} at {}".format(str, dir, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
 
@@ -97,7 +99,7 @@ if __name__ == "__main__":
     # check the os existence
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir, exist_ok=True)
-    if not os.path.exists(os.path.join(args.save_dir, "params")):
+    if args.save_params and not os.path.exists(os.path.join(args.save_dir, "params")):
         os.makedirs(os.path.join(args.save_dir, "params"), exist_ok=True)
 
 
@@ -136,18 +138,18 @@ if __name__ == "__main__":
                 if args.prompt_save_level == "all":
                     csv = adder(csv, model, global_prefix, "0-shot", "", "", setname,
                             np.mean(zeros_acc[setname]),
-                            np.std(zeros_acc[setname]),"","","")
+                            np.std(zeros_acc[setname]),"","","","")
                 else:   # For each prompt, save one line
                     for idx in range(len(zeros_acc[setname])):
                         csv = adder(csv, model, global_prefix, "0-shot",
                                     prompt_level= idx, train= "", test = setname,
                                     accuracy = zeros_acc[setname][idx],
-                                    std = "", location = "", layer = "", loss = "",
+                                    std = "", ece="", location = "", layer = "", loss = "",
                                     sim_loss = "", cons_loss = "")
 
 
             if not args.no_save_results:
-                saveCsv(csv, global_prefix, "After calculating zeroshot performance.")
+                saveCsv(csv, args.save_dir, global_prefix, "After calculating zeroshot performance.")
 
         for method in args.method_list:
             if method == "0-shot":
@@ -203,6 +205,7 @@ if __name__ == "__main__":
                 if method.startswith("RCCS"):
                     method_ = "CCS"
                     if method != "RCCS0":
+                        # TODO: replace this with call to parameter-loading function.
                         constraints = np.load(
                             os.path.join(args.save_dir, "params", "coef_{}.npy".format(params_file_name))
                         )
@@ -210,19 +213,20 @@ if __name__ == "__main__":
                             os.path.join(args.save_dir, "params", "intercept_{}.npy".format(params_file_name))
                         )
 
-                load_classifier_dir_and_name = (args.save_dir, params_file_name) if args.load_classifier else None
+                load_classifier_dir_and_name = (args.params_load_dir, params_file_name) if args.load_classifier else None
 
                 # return a dict with the same shape as test_dict
                 # for each key test_dict[key] is a unitary list
-                res, lss, pmodel, cmodel = mainResults(
+                res, lss, tce, pmodel, cmodel = mainResults(
                     data_dict = data_dict,
                     permutation_dict = permutation_dict,
                     projection_dict = projection_dict,
                     test_dict = test_dict,
-                    n_components = n_components,
                     projection_method = "PCA",
+                    n_components = n_components,
                     load_classifier_dir_and_name=load_classifier_dir_and_name,
                     classification_method = method_,
+                    print_more=args.verbose,
                     save_file_prefix=save_file_prefix,
                     test_on_train=args.test_on_train,
                     constraints=constraints,
@@ -259,8 +263,16 @@ if __name__ == "__main__":
                         saveParams(args.save_dir, params_file_name, coef, bias)
 
                 acc, std, loss, sim_loss, cons_loss = getAvg(res), np.mean([np.std(lis) for lis in res.values()]), *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0)
-                print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}".format(
-                    maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss)
+                if is_method_unsupervised(method):
+                    # Take the best (min) ECE for the original and flipped predicted probabilities
+                    # if the method is unsupervised.
+                    ece_dict = {key: [min(ece) for ece in ece_vals] for key, ece_vals in tce.items()}
+                else:
+                    # Otherwise, take the ECE for the original predicted probabilities.
+                    ece_dict = {key: [ece[0] for ece in ece_vals] for key, ece_vals in tce.items()}
+                ece = getAvg(ece_dict)
+                print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}".format(
+                    maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss, ece)
                 )
 
                 for key in dataset_list:
@@ -269,6 +281,7 @@ if __name__ == "__main__":
                         csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, key,
                                     accuracy = np.mean(res[key]),
                                     std = np.std(res[key]),
+                                    ece=np.mean(ece_dict[key]),
                                     location = args.location,
                                     layer = args.layer,
                                     loss = loss, sim_loss = sim_loss, cons_loss = cons_loss,
@@ -279,10 +292,11 @@ if __name__ == "__main__":
                             csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), idx, train_set, key,
                                         accuracy = res[key][idx],
                                         std = "",
+                                        ece=ece_dict[key][idx],
                                         location = args.location,
                                         layer = args.layer,
                                         loss = loss, sim_loss = sim_loss, cons_loss = cons_loss,
                                         )
 
         if not args.no_save_results:
-            saveCsv(csv, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))
+            saveCsv(csv, args.save_dir, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))

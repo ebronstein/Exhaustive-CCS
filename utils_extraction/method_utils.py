@@ -11,7 +11,14 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 
-from utils_extraction import load_utils
+from utils_extraction import load_utils, metrics
+
+UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
+SUPERVISED_METHODS = ("LR",)
+
+
+def is_method_unsupervised(method):
+    return method in UNSUPERVISED_METHODS or method.startswith("RCCS")
 
 
 class myReduction():
@@ -238,6 +245,15 @@ class ConsistencyMethod(object):
         p0, p1 = torch.sigmoid(z0).numpy(), torch.sigmoid(z1).numpy()
 
         return p0, p1
+
+    def predict_probs(self, data):
+        """Predicts class probabilities for data.
+
+        Arbitrarily returns the probability of class 0 since the method is
+        unsupervised and it is not known which class 0 corresponds to.
+        """
+        p0, p1 = self.transform(data, self.best_theta)
+        return 0.5*(p0 + (1-p1))
 
     # Return the accuracy of (data, label)
     def get_acc(self, theta_np, data: list, label, getloss=False, save_file=None):
@@ -520,13 +536,21 @@ class myClassifyModel(LogisticRegression):
             self.loss = minloss
             self.set_params(final_coef, final_bias)
 
+    def predict_probs(self, data):
+        """Predicts class probabilities for data."""
+        if self.method == "KMeans":
+            return self.model.predict(data)
+        else:
+            # Return the probability of class 1
+            return super().predict_proba(data)[..., 1]
+
     def score(self, data, label, getloss=False, sample_weight=None, save_file=None):
         if self.method == "KMeans":
             if save_file is not None:
                 print("save_file not supported for KMeans")
 
             prediction = self.model.predict(data)
-            acc = max(np.mean(prediction == label), np.mean(1 - prediction == label))
+            acc = np.mean(prediction == label)
             if getloss:
                 return acc, (0.0, 0.0, 0.0)
             return acc
@@ -647,15 +671,21 @@ def mainResults(
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
     if load_classifier_dir_and_name is not None:
-        if print_more:
-            print("Loading classifier from", load_classifier_dir_and_name)
-        coef, bias = load_utils.load_params(*load_classifier_dir_and_name)
+        try:
+            coef, bias = load_utils.load_params(*load_classifier_dir_and_name)
+            if print_more:
+                print("Loaded classifier from", load_classifier_dir_and_name)
+        except FileNotFoundError:
+            coef, bias = None, None
+            if print_more:
+                print("Classifier not found, will train from scratch")
+
 
     if classification_method == "CCS":
         init_kwargs = dict(verbose=print_more,
                            no_train=no_train,
                            constraints=constraints)
-        if load_classifier_dir_and_name is not None:
+        if load_classifier_dir_and_name is not None and coef is not None:
             classify_model = ConsistencyMethod.from_coef_and_bias(coef, bias, **init_kwargs)
         else:
             classify_model = ConsistencyMethod(**init_kwargs)
@@ -689,9 +719,9 @@ def mainResults(
 
 
 
-    res, lss = {}, {}
+    res, lss, tce = {}, {}, {}
     for key, lis in test_dict.items():
-        res[key], lss[key] = [], []
+        res[key], lss[key], tce[key] = [], [], []
         for prompt_idx in lis:
             dic = {key: [prompt_idx]}
             # if train_on_test and method != "BSS":
@@ -706,18 +736,24 @@ def mainResults(
             if classification_method == "CCS":
                 data = [data[:,:data.shape[1]//2], data[:,data.shape[1]//2:]]
 
-            save_file = f"{save_file_prefix}/{key}{prompt_idx}_{method}.csv" if save_file_prefix else None
+            save_file = f"{save_file_prefix}/{key}_{prompt_idx}_{method}.csv" if save_file_prefix else None
             if save_file:
                 os.makedirs(os.path.dirname(save_file), exist_ok=True)
 
             acc, losses = classify_model.score(data, label, getloss = True, save_file=save_file)
+            predicted_probs = classify_model.predict_probs(data)
+            tce_estimate_1 = metrics.CalibrationError().update(
+                torch.from_numpy(label), torch.from_numpy(predicted_probs)).compute(p=1)
+            tce_estimate_2 = metrics.CalibrationError().update(
+                torch.from_numpy(label), torch.from_numpy(1 - predicted_probs)).compute(p=1)
             res[key].append(acc)
             lss[key].append(losses)
+            tce[key].append((tce_estimate_1.ece, tce_estimate_2.ece))
 
     duration = time.time() - start
     if print_more:
         print("mainResults finished, duration: {}s".format(duration))
-    return res, lss, projection_model, classify_model
+    return res, lss, tce, projection_model, classify_model
 
 # print("\
 # ------ Func: printAcc ------\n\
