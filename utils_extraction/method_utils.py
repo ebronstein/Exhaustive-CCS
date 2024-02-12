@@ -425,6 +425,17 @@ class myClassifyModel(LogisticRegression):
         super(myClassifyModel, self).__init__(max_iter = 10000, n_jobs = 1, C = 0.1)
         self.print_more = print_more
 
+    @classmethod
+    def from_coef_and_bias(cls, method, coef, bias=None, **kwargs):
+        if method != "LR":
+            raise ValueError(
+                "Only logistical regression classification model can be "
+                f"initialized with a coefficient and intercept, got {method}")
+
+        instance = cls(method, **kwargs)
+        instance.set_params(coef, bias)
+        return instance
+
     def set_params(self, coef, bias):
         self.classes_ = np.array([0,1])
         self.intercept_ = bias
@@ -709,13 +720,17 @@ def mainResults(
         classify_model.fit([w[0] for w in lis], [w[1] for w in lis], weights = weights, **learn_dict)
 
     else:
-        classify_model = myClassifyModel(method = classification_method, print_more = print_more)
-        data, labels = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
+        if coef is not None:
+            classify_model = myClassifyModel.from_coef_and_bias(
+                classification_method, coef, bias=bias, print_more=print_more)
+        else:
+            classify_model = myClassifyModel(classification_method, print_more = print_more)
+            data, labels = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
 
-        if project_along_mean_diff:
-            data = project_data_along_axis(data, labels)
+            if project_along_mean_diff:
+                data = project_data_along_axis(data, labels)
 
-        classify_model.fit(data, labels)
+            classify_model.fit(data, labels)
 
 
 
