@@ -15,6 +15,7 @@ from utils_extraction.func_utils import adder, getAvg
 from utils_extraction.load_utils import get_zeros_acc, getDic
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation.save_utils import (
+    get_probs_save_dir_path,
     make_params_filename,
     maybeAppendProjectSuffix,
     saveParams,
@@ -186,7 +187,7 @@ if __name__ == "__main__":
                 n_components = 1 if method == "TPC" else -1
 
                 save_file_prefix = (
-                    f"{args.save_dir}/states_{args.model}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}/{train_set}"
+                    get_probs_save_dir_path(args.save_dir, args.model, method, project_along_mean_diff, args.seed, train_set)
                     if args.save_states
                     else None
                 )

@@ -25,6 +25,11 @@ def make_params_filename(model, prefix, method, train_set, seed):
         model, prefix, method, "all", train_set, seed)
 
 
+def get_probs_save_dir_path(root_dir, model, method, project_along_mean_diff, seed, train_set):
+    """Returns the path to the directory where the classifier probabilities are saved."""
+    return f"{root_dir}/states_{model}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}_{seed}/{train_set}"
+
+
 def saveParams(save_dir, name, coef: np.ndarray, intercept: Optional[np.ndarray]):
     path = os.path.join(save_dir, "params")
     np.save(os.path.join(path, "coef_{}.npy".format(name)), coef)
