@@ -287,8 +287,8 @@ if __name__ == "__main__":
                                     loss = loss, sim_loss = sim_loss, cons_loss = cons_loss,
                                     )
                     else:
-                        loss, sim_loss, cons_loss = lss[key][idx] if methodHasLoss(method) else ("", "", "")
                         for idx in range(len(res[key])):
+                            loss, sim_loss, cons_loss = lss[key][idx] if methodHasLoss(method) else ("", "", "")
                             csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), idx, train_set, key,
                                         accuracy = res[key][idx],
                                         std = "",
