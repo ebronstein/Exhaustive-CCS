@@ -6,6 +6,7 @@ CalibrationError implementation is from EleutherAI/ccs/ccs/metrics/calibration.p
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -100,3 +101,52 @@ class CalibrationError:
         ece = torch.sum(w * torch.abs(accs_star - mean_confs) ** p) ** (1 / p)
 
         return CalibrationEstimate(float(ece), b_star, mean_confs, accs_star)
+
+
+def expected_calibration_error(probs, labels, num_bins=10):
+    """
+    Calculate the Expected Calibration Error (ECE) of a classification model.
+
+    Args:
+    - probs (array-like): Predicted probabilities for each sample, in the range [0, 1].
+    - labels (array-like): True labels for each sample, in {0, 1}.
+    - num_bins (int): Number of bins to divide the interval [0, 1].
+
+    Returns:
+    - ece (float): Expected Calibration Error.
+    """
+    probs = np.asarray(probs)
+    labels = np.asarray(labels)
+
+    # Ensure the inputs have the same length
+    assert probs.shape[0] == labels.shape[0], "Number of probabilities and labels must be the same."
+
+    # Calculate the bin boundaries
+    percentiles = np.linspace(0, 100, 11)
+    bin_boundaries = np.percentile(probs, percentiles)
+
+    # Initialize variables to store total confidence and accuracy in each bin
+    bin_mean_probs = np.zeros(num_bins)
+    bin_mean_labels = np.zeros(num_bins)
+    bin_samples = np.zeros(num_bins)
+
+    # Assign each prediction to its corresponding bin
+    bin_indices = np.digitize(probs, bin_boundaries) - 1
+
+    # Compute the total confidence and accuracy in each bin
+    for i in range(num_bins):
+        bin_mask = bin_indices == i
+        bin_samples[i] = np.sum(bin_mask)
+        if bin_samples[i] > 0:
+            bin_mean_probs[i] = np.mean(probs[bin_mask])
+            bin_mean_labels[i] = np.mean(labels[bin_mask])
+
+    # Remove empty bins
+    non_empty_bins = bin_samples > 0
+    bin_mean_probs = bin_mean_probs[non_empty_bins]
+    bin_mean_labels = bin_mean_labels[non_empty_bins]
+    bin_samples = bin_samples[non_empty_bins]
+
+    ece = np.average(np.abs(bin_mean_labels - bin_mean_probs), weights=bin_samples / np.sum(bin_samples))
+
+    return ece, bin_mean_probs, bin_mean_labels
