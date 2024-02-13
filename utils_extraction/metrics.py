@@ -114,6 +114,8 @@ def expected_calibration_error(probs, labels, num_bins=10):
 
     Returns:
     - ece (float): Expected Calibration Error.
+    - bin_mean_probs (np.ndarray): Mean predicted probability in each bin.
+    - bin_mean_labels (np.ndarray): Mean true label in each bin.
     """
     probs = np.asarray(probs)
     labels = np.asarray(labels)

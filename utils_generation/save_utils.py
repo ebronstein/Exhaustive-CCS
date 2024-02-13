@@ -30,6 +30,10 @@ def get_probs_save_dir_path(root_dir, model, method, project_along_mean_diff, se
     return f"{root_dir}/states_{model}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}_{seed}/{train_set}"
 
 
+def get_results_save_path(root_dir, model, prefix, seed):
+    return os.path.join(root_dir, "{}_{}_{}.csv".format(model, prefix, seed))
+
+
 def saveParams(save_dir, name, coef: np.ndarray, intercept: Optional[np.ndarray]):
     path = os.path.join(save_dir, "params")
     np.save(os.path.join(path, "coef_{}.npy".format(name)), coef)

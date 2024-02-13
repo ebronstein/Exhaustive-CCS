@@ -247,13 +247,9 @@ class ConsistencyMethod(object):
         return p0, p1
 
     def predict_probs(self, data):
-        """Predicts class probabilities for data.
-
-        Arbitrarily returns the probability of class 0 since the method is
-        unsupervised and it is not known which class 0 corresponds to.
-        """
+        """Predicts class 1 probabilities for data."""
         p0, p1 = self.transform(data, self.best_theta)
-        return 0.5*(p0 + (1-p1))
+        return 0.5*(p1 + (1-p0))
 
     # Return the accuracy of (data, label)
     def get_acc(self, theta_np, data: list, label, getloss=False, save_file=None):
@@ -261,10 +257,10 @@ class ConsistencyMethod(object):
         Computes the accuracy of a given direction theta_np represented as a numpy array
         """
         p0, p1 = self.transform(data, theta_np)
-        avg_confidence = 0.5*(p0 + (1-p1))
+        avg_confidence = 0.5*(p1 + (1-p0))
 
         label = label.reshape(-1)
-        predictions = (avg_confidence < 0.5).astype(int)[:, 0]
+        predictions = (avg_confidence >= 0.5).astype(int)[:, 0]
         acc = (predictions == label).mean()
 
         if save_file is not None:
@@ -734,9 +730,9 @@ def mainResults(
 
 
 
-    res, lss, tce = {}, {}, {}
+    res, lss, ece_dict = {}, {}, {}
     for key, lis in test_dict.items():
-        res[key], lss[key], tce[key] = [], [], []
+        res[key], lss[key], ece_dict[key] = [], [], []
         for prompt_idx in lis:
             dic = {key: [prompt_idx]}
             # if train_on_test and method != "BSS":
@@ -756,19 +752,17 @@ def mainResults(
                 os.makedirs(os.path.dirname(save_file), exist_ok=True)
 
             acc, losses = classify_model.score(data, label, getloss = True, save_file=save_file)
-            predicted_probs = classify_model.predict_probs(data)
-            tce_estimate_1 = metrics.CalibrationError().update(
-                torch.from_numpy(label), torch.from_numpy(predicted_probs)).compute(p=1)
-            tce_estimate_2 = metrics.CalibrationError().update(
-                torch.from_numpy(label), torch.from_numpy(1 - predicted_probs)).compute(p=1)
+            predicted_probs = classify_model.predict_probs(data).flatten()
+            ece = metrics.expected_calibration_error(predicted_probs, label)[0]
+            ece_flip = metrics.expected_calibration_error(1 - predicted_probs, label)[0]
             res[key].append(acc)
             lss[key].append(losses)
-            tce[key].append((tce_estimate_1.ece, tce_estimate_2.ece))
+            ece_dict[key].append((ece, ece_flip))
 
     duration = time.time() - start
     if print_more:
         print("mainResults finished, duration: {}s".format(duration))
-    return res, lss, tce, projection_model, classify_model
+    return res, lss, ece_dict, projection_model, classify_model
 
 # print("\
 # ------ Func: printAcc ------\n\
