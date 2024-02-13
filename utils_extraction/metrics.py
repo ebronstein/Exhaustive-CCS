@@ -4,6 +4,7 @@ CalibrationError implementation is from EleutherAI/ccs/ccs/metrics/calibration.p
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -13,6 +14,8 @@ from torch import Tensor
 class CalibrationEstimate:
     ece: float
     num_bins: int
+    prob_means: Tensor
+    label_means: Tensor
 
 
 @dataclass
@@ -42,7 +45,7 @@ class CalibrationError:
         self.pred_probs.append(probs)
         return self
 
-    def compute(self, p: int = 2) -> CalibrationEstimate:
+    def compute(self, p: int = 2, num_bins: Optional[int] = None) -> CalibrationEstimate:
         """Compute the expected calibration error.
 
         Args:
@@ -61,9 +64,17 @@ class CalibrationError:
 
         # Search for the largest number of bins which preserves monotonicity.
         # Based on Algorithm 1 in Roelofs et al. (2020).
-        # Using a single bin is guaranteed to be monotonic, so we start there.
-        b_star, accs_star = 1, labels.mean().unsqueeze(0)
-        for b in range(2, n + 1):
+        if num_bins == None:
+            # Using a single bin is guaranteed to be monotonic, so we start there.
+            b_star = 1
+            b_min = 2
+            b_max = n + 1
+        else:
+            b_star = num_bins
+            b_min = num_bins
+            b_max = num_bins + 1
+        accs_star = labels.mean().unsqueeze(0)
+        for b in range(b_min, b_max):
             # Split into (nearly) equal mass bins
             freqs = torch.stack([h.mean() for h in labels.tensor_split(b)])
 
@@ -88,4 +99,4 @@ class CalibrationError:
         mean_confs = torch.stack([c.mean() for c in conf_bins])
         ece = torch.sum(w * torch.abs(accs_star - mean_confs) ** p) ** (1 / p)
 
-        return CalibrationEstimate(float(ece), b_star)
+        return CalibrationEstimate(float(ece), b_star, mean_confs, accs_star)
