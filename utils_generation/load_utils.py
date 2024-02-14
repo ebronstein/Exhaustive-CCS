@@ -1,39 +1,22 @@
 import os
-from contextlib import contextmanager
-from tempfile import TemporaryDirectory
 
 import pandas as pd
 from numpy import longdouble
 from transformers import (
-    AutoConfig,
-    AutoModel,
     AutoModelForCausalLM,
-    AutoModelForMaskedLM,
     AutoModelForSeq2SeqLM,
     AutoModelForSequenceClassification,
     AutoModelWithLMHead,
     AutoTokenizer,
     GPT2LMHeadModel,
     GPT2Tokenizer,
-    GPTNeoForCausalLM,
     T5ForConditionalGeneration,
 )
 
 from datasets import load_dataset
 from utils_generation.construct_prompts import MyPrompts, constructPrompt
+from utils_generation.hf_utils import prevent_name_conflicts
 from utils_generation.save_utils import getDir, saveFrame
-
-
-@contextmanager
-def prevent_name_conflicts():
-    """Temporarily change cwd to a temporary directory, to prevent name conflicts."""
-    with TemporaryDirectory() as tmp:
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(tmp)
-            yield
-        finally:
-            os.chdir(old_cwd)
 
 
 def loadModel(mdl_name, cache_dir, parallelize):
