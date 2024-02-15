@@ -134,6 +134,8 @@ def expected_calibration_error(probs, labels, num_bins=10):
 
     # Assign each prediction to its corresponding bin
     bin_indices = np.digitize(probs, bin_boundaries) - 1
+    # Clip the indices to ensure they are within the range [0, num_bins - 1]
+    bin_indices = np.clip(bin_indices, 0, num_bins - 1)
 
     # Compute the total confidence and accuracy in each bin
     for i in range(num_bins):
