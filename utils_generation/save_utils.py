@@ -4,10 +4,57 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from transformers import AutoConfig
+
+from utils_generation.hf_auth_token import HF_AUTH_TOKEN
+
+FULL_MODEL_NAME_TO_SHORT_NAME = {
+    "t5-11b": "t5-11b",
+    "google-t5/t5-11b": "google-t5-t5-11b",
+    "allenai/unifiedqa-t5-11b": "unifiedqa-t5-11b",
+    "bigscience/T0pp": "T0pp",
+    "EleutherAI/gpt-j-6B": "gpt-j-6B",
+    "roberta-large-mnli": "roberta-large-mnli",
+    "microsoft/deberta-v2-xxlarge-mnli": "deberta-v2-xxlarge-mnli",
+}
+
+
+def get_model_short_name(model_str: str) -> str:
+    """Get the short name of a model.
+
+    Checks the following short names and returns the first one that is valide
+    (i.e., it's in the HuffingFace Hub):
+    - If the model is in `FULL_MODEL_NAME_TO_SHORT_NAME`, return the corresponding short name.
+    - The last part of the model name (e.g., "t5-11b" for "path/to/t5-11b").
+    - The last two parts of the model name (e.g., "EleutherAI/gpt-j-6B" for "path/to/EleutherAI/gpt-j-6B").
+
+    If none of the above are valid, return the full model name with "/" replaced by "-".
+    """
+    if model_str.endswith("/"):
+        model_str = model_str[:-1]
+
+    if model_str in FULL_MODEL_NAME_TO_SHORT_NAME:
+        return FULL_MODEL_NAME_TO_SHORT_NAME[model_str]
+
+    short_names = [
+        model_str.split("/")[-1],
+        "/".join(model_str.split("/")[-2:]),
+        model_str,
+    ]
+    for short_name in short_names:
+        try:
+            AutoConfig.from_pretrained(short_name, use_auth_token=HF_AUTH_TOKEN)
+            break
+        except OSError:
+            pass
+
+    return short_name.replace("/", "-")
+
 
 
 def getDir(dataset_name_w_num, args):
-    d = "{}_{}_{}_{}".format(args.model, dataset_name_w_num, args.prefix, args.token_place)
+    model_short_name = get_model_short_name(args.model)
+    d = "{}_{}_{}_{}".format(model_short_name, dataset_name_w_num, args.prefix, args.token_place)
     if args.tag != "":
         d += "_{}".format(args.tag)
 
@@ -21,17 +68,20 @@ def maybeAppendProjectSuffix(method, project_along_mean_diff):
 
 
 def make_params_filename(model, prefix, method, train_set, seed):
+    model_short_name = get_model_short_name(model)
     return "{}_{}_{}_{}_{}_{}".format(
-        model, prefix, method, "all", train_set, seed)
+        model_short_name, prefix, method, "all", train_set, seed)
 
 
 def get_probs_save_dir_path(root_dir, model, method, project_along_mean_diff, seed, train_set):
     """Returns the path to the directory where the classifier probabilities are saved."""
-    return f"{root_dir}/states_{model}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}_{seed}/{train_set}"
+    model_short_name = get_model_short_name(model)
+    return f"{root_dir}/states_{model_short_name}_{maybeAppendProjectSuffix(method, project_along_mean_diff)}_{seed}/{train_set}"
 
 
 def get_results_save_path(root_dir, model, prefix, seed):
-    return os.path.join(root_dir, "{}_{}_{}.csv".format(model, prefix, seed))
+    model_short_name = get_model_short_name(model)
+    return os.path.join(root_dir, "{}_{}_{}.csv".format(model_short_name, prefix, seed))
 
 
 def saveParams(save_dir, name, coef: np.ndarray, intercept: Optional[np.ndarray]):

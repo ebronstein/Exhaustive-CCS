@@ -14,7 +14,11 @@ import pandas as pd
 from utils_extraction.func_utils import adder, getAvg
 from utils_extraction.load_utils import get_zeros_acc, getDic
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
+from utils_generation import hf_utils
+from utils_generation import parser as parser_utils
+from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 from utils_generation.save_utils import (
+    get_model_short_name,
     get_probs_save_dir_path,
     get_results_save_path,
     make_params_filename,
@@ -28,13 +32,11 @@ json_dir = "./registration"
 with open("{}.json".format(json_dir), "r") as f:
     global_dict = json.load(f)
 registered_dataset_list = global_dict["dataset_list"]
-registered_models = global_dict["registered_models"]
 registered_prefix = global_dict["registered_prefix"]
-models_layer_num = global_dict["models_layer_num"]
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type = str, choices=registered_models)
+parser.add_argument("--model", type = str)
 parser.add_argument("--prefix", nargs="+", default = ["normal"], choices = registered_prefix)
 parser.add_argument("--datasets", nargs="+", default = registered_dataset_list)
 parser.add_argument("--test", type = str, default = "testall", choices = ["testone", "testall"])
@@ -74,10 +76,11 @@ args = parser.parse_args()
 dataset_list = args.datasets
 assert args.test != "testone", NotImplementedError("Current extraction program does not support applying method on prompt-specific level.")
 
-if args.location == "auto":
-    args.location = "decoder" if "gpt" in args.model else "encoder"
+args.location = parser_utils.get_states_location_str(args.location, args.model, use_auth_token=HF_AUTH_TOKEN)
+num_layers = hf_utils.get_num_hidden_layers(args.model)
+# TODO: validate args.location more extensively.
 if args.location == "decoder" and args.layer < 0:
-    args.layer += models_layer_num[args.model]
+    args.layer += num_layers
 
 
 def print_args(args):
@@ -91,10 +94,11 @@ def methodHasLoss(method):
     return method in ["BSS", "CCS"] or method.startswith("RCCS")
 
 
-def saveCsv(csv, save_dir, prefix, str = ""):
-    dir = os.path.join(save_dir, "{}_{}_{}.csv".format(args.model, prefix, args.seed))
+def saveCsv(csv, save_dir, model_str, prefix, seed, msg = ""):
+    model_short_name = get_model_short_name(model_str)
+    dir = os.path.join(save_dir, "{}_{}_{}.csv".format(model_short_name, prefix, seed))
     csv.to_csv(dir, index = False)
-    print("{} Saving to {} at {}".format(str, dir, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
+    print("{} Saving to {} at {}".format(msg, dir, time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
 
 
 if __name__ == "__main__":
@@ -154,7 +158,7 @@ if __name__ == "__main__":
 
 
             if not args.no_save_results:
-                saveCsv(csv, args.save_dir, global_prefix, "After calculating zeroshot performance.")
+                saveCsv(csv, args.save_dir, args.model, global_prefix, args.seed, "After calculating zeroshot performance.")
 
         for method in args.method_list:
             if method == "0-shot":
@@ -302,4 +306,4 @@ if __name__ == "__main__":
                                         )
 
         if not args.no_save_results:
-            saveCsv(csv, args.save_dir, global_prefix, "After finish {}".format(maybeAppendProjectSuffix(method, False)))
+            saveCsv(csv, args.save_dir, args.model, global_prefix, args.seed, "After finish {}".format(maybeAppendProjectSuffix(method, False)))

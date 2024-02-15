@@ -1,7 +1,10 @@
 import time
-from utils_generation.parser import getArgs
-from utils_generation.load_utils import loadModel, loadDatasets
+
+from utils_generation import hf_utils
 from utils_generation.generation import calZeroAndHiddenStates
+from utils_generation.hf_auth_token import HF_AUTH_TOKEN
+from utils_generation.load_utils import loadDatasets, loadModel
+from utils_generation.parser import getArgs
 
 if __name__ == "__main__":
     print("---------------- Program Begin ----------------")
@@ -12,8 +15,8 @@ if __name__ == "__main__":
     args = getArgs()
 
     # load models, stored in GPU
-    model, tokenizer = loadModel(
-        mdl_name=args.model, cache_dir=args.cache_dir, parallelize=args.parallelize)
+    model = hf_utils.instantiate_model(args.model, use_auth_token=HF_AUTH_TOKEN, device="cuda")
+    tokenizer = hf_utils.instantiate_tokenizer(args.model, use_auth_token=HF_AUTH_TOKEN)
 
     prefix_list = args.prefix
     for prefix in prefix_list:

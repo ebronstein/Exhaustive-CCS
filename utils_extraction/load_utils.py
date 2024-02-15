@@ -5,25 +5,50 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from utils_generation.save_utils import get_model_short_name
+
 ######## JSON Load ########
 json_dir = "./registration"
 
 with open("{}.json".format(json_dir), "r") as f:
     global_dict = json.load(f)
 registered_dataset_list = global_dict["dataset_list"]
-registered_models = global_dict["registered_models"]
 registered_prefix = global_dict["registered_prefix"]
-models_layer_num = global_dict["models_layer_num"]
 
 
-load_dir = "./generation_results"
+def parse_generation_dir(generation_dir: str) -> Optional[tuple[str, str, str, str, str, str]]:
+    """Parse a generation directory to extract its parameters."""
+    parts = generation_dir.split("_")
+    if len(parts) != 6:
+        return None
 
-def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idx):
-    length = len(mdl)
-    filter = [w for w in os.listdir(load_dir) if (mdl == w[:length] and mdl + "_" in w and set_name + "_" in w and str(data_num) + "_" in w and confusion + "_" in w and place in w)]
-    if prompt_idx is not None:
-        filter = [w for w in filter if int(w.split("_")[3][6:]) in prompt_idx]
-    return [os.path.join(load_dir, w) for w in filter]
+    short_model_name, dataset, num_examples, prompt_idx, confusion, location = parts
+    prompt_idx = int(prompt_idx.replace("prompt", ""))
+    num_examples = int(num_examples)
+    return short_model_name, dataset, num_examples, prompt_idx, confusion, location
+
+
+def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idxs: Optional[list[int]] = None):
+    target_short_model_name = get_model_short_name(mdl)
+    gen_dirs = []
+    subdirs = [d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))]
+    for gen_dir in subdirs:
+        parts = parse_generation_dir(gen_dir)
+        if parts is None:
+            continue
+        short_model_name, dataset, num_examples, prompt_idx, confusion_, location = parts
+        if (
+            short_model_name == target_short_model_name
+            and dataset == set_name
+            and num_examples == data_num
+            and (prompt_idxs is None or prompt_idx in prompt_idxs)
+            and confusion_ == confusion
+            and location == place
+        ):
+            gen_dirs.append(gen_dir)
+
+    return [os.path.join(load_dir, d) for d in gen_dirs]
+
 
 def organizeStates(lis, mode):
     '''
@@ -88,7 +113,7 @@ def getPermutation(data_list, rate = 0.6):
     return [permutation[: int(length * rate)], permutation[int(length * rate):]]
 
 
-def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location="auto", layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
+def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location=None, layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
     """Loads hidden states and labels.
 
     Args:
@@ -108,10 +133,11 @@ def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location="auto",
         data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label) corresponding to a prompt. State has shape (#data * #dim), and label has shape (#data). For example, data_dict["imdb"][0][0] contains the hidden states for the first prompt for the imdb dataset.
         permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.
     """
-    if location == "auto":
-        location = "decoder" if "gpt" in mdl_name else "encoder"
-    if location == "decoder" and layer < 0:
-        layer += models_layer_num[mdl_name]
+    if location not in ["encoder", "decoder"]:
+        raise ValueError(f"Location must be either 'encoder' or 'decoder', got {location}")
+    elif location == "decoder" and layer < 0:
+        raise ValueError(f"Decoder layer must be non-negative, got {layer}.")
+
     print("start loading {} hidden states {} for {} with {} prefix. Prompt_dict: {}, Scale: {}, Demean: {}, Mode: {}".format(location, layer, mdl_name, prefix, prompt_dict if prompt_dict is not None else "ALL", scale, demean, mode))
     prompt_dict = prompt_dict if prompt_dict is not None else {key: None for key in dataset_list}
     data_dict = {set_name: loadHiddenStates(mdl_name, set_name, load_dir, prompt_dict[set_name], location, layer, data_num = data_num, confusion = prefix, scale = scale, demean = demean, mode = mode, verbose = verbose) for set_name in dataset_list}

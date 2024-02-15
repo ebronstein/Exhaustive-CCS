@@ -398,14 +398,15 @@ def concatAnswer(question, ans, mdl_name, confusion):
 
     # for bert model, should add [SEP]
     if 'deberta' in mdl_name:
-        return question + " [SEP] " + ans
+        sep = "[SEP] " if question[-1] == " " else " [SEP] "
+        return question + sep + ans
     elif "roberta" in mdl_name:
         return question + "</s></s>" + ans
     elif "gpt" in mdl_name:
         if question[-1] != '\n' and question[-1] != " ":
             return question + '\n' + ans
         return question + ans
-    else:  # T5 based moel
+    else:  # T5 based model or a different model
         if question[-1] == "\n" or question[-1] == " ":
             return question + ans
         return question + " " + ans

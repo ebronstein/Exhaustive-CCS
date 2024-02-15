@@ -107,6 +107,11 @@ def instantiate_tokenizer(model_str: str, **kwargs) -> PreTrainedTokenizerBase:
             return AutoTokenizer.from_pretrained(model_str, use_fast=False, **kwargs)
 
 
+def get_model_config(model_str: str, use_auth_token: Optional[Union[bool, str]] = None) -> PretrainedConfig:
+    """Return the model config for a given model."""
+    return AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)
+
+
 def is_autoregressive(model_cfg: PretrainedConfig, include_enc_dec: bool) -> bool:
     """Check if a model config is autoregressive."""
     archs = model_cfg.architectures
@@ -115,3 +120,29 @@ def is_autoregressive(model_cfg: PretrainedConfig, include_enc_dec: bool) -> boo
 
     suffixes = _AUTOREGRESSIVE_SUFFIXES if include_enc_dec else _DECODER_ONLY_SUFFIXES
     return any(arch_str.endswith(suffix) for arch_str in archs for suffix in suffixes)
+
+
+def is_decoder_only(model_str: str,
+                    model_cfg: Optional[PretrainedConfig] = None,
+                    use_auth_token: Optional[Union[bool, str]]=None) -> bool:
+    """Check if a model config is decoder-only."""
+    if model_cfg is None:
+        model_cfg = get_model_config(model_str, use_auth_token=use_auth_token)
+    # For some reason, t5-11b is appears as a decoder-only architecture even
+    # though it's encoder-decoder.
+    return is_autoregressive(model_cfg, include_enc_dec=False) and model_str not in ["google-t5/t5-11b", "t5-11b"]
+
+
+def is_encoder_only(model_str: str,
+                    model_cfg: Optional[PretrainedConfig] = None,
+                    use_auth_token: Optional[Union[bool, str]] = None) -> bool:
+    """Check if a model config is encoder-only."""
+    if model_cfg is None:
+        model_cfg = get_model_config(model_str, use_auth_token=use_auth_token)
+    return not is_autoregressive(model_cfg, include_enc_dec=True)
+
+
+def get_num_hidden_layers(model: str) -> int:
+    """Return the number of hidden layers in a model."""
+    # Look up the model config to get the number of layers
+    return AutoConfig.from_pretrained(model).num_hidden_layers

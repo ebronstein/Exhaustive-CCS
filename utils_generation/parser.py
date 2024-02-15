@@ -1,6 +1,10 @@
 import argparse
 import json
+from typing import Optional, Union
+
+from utils_generation import hf_utils
 from utils_generation.construct_prompts import confusion_prefix
+from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -8,9 +12,8 @@ json_dir = "./registration"
 with open("{}.json".format(json_dir), "r") as f:
     global_dict = json.load(f)
 dataset_list = global_dict["dataset_list"]
-registered_models = global_dict["registered_models"]
 registered_prefix = global_dict["registered_prefix"]
-models_layer_num = global_dict["models_layer_num"]
+
 
 def getArgs():
     parser = argparse.ArgumentParser()
@@ -50,8 +53,8 @@ def getArgs():
                         help="Whether to extract the logits of the token in which the prediction firstly differs.")
     parser.add_argument("--token_place", type=str, default="last",
                         help="Determine which token's hidden states will be generated. Can be `first` or `last` or `average`.")
-    parser.add_argument("--states_location", type=str,default="null",choices=["encoder","decoder", "null"],
-                        help="Whether to generate encoder hidden states or decoder hidden states. Default is null, which will be extended to decoder when the model is gpt or encoder otherwise.")
+    parser.add_argument("--states_location", type=str,default="auto",choices=["encoder","decoder", "auto"],
+                        help="Whether to generate encoder hidden states or decoder hidden states. Default is auto, which will use the decoder when the model is decoder-only, and the encoder otherwise.")
     parser.add_argument("--states_index",nargs="+", default = [-1],
                         help="List of layer hidden states index to generate. -1 means the last layer. For encoder, we will transform positive index into negative. For example, T0pp has 25 layer, indexed by 0, ..., 24. Index 20 will be transformed into -5. For decoder, index will instead be transform into non-negative value. For example, the last decoder layer will be 24 (rather than -1). The choice between encoder and decoder is specified by `states_location`. For decoder, answer will be padded into token rather than into the input.")
     parser.add_argument("--tag", type=str, default="",
@@ -75,10 +78,7 @@ def getArgs():
     # Add features. Only forbid cal_logits for bert type model now
     if args.cal_logits and "bert" in args.model:
         raise NotImplementedError(
-            "You use {}, but bert type models do not have standard logits. Please set cal_logits to 0.".format(args.model)) 
-
-    assert args.model in registered_models, NotImplementedError(
-        "You use model {}, but it's not registered. For any new model, please make sure you implement the code in `load_utils` and `generation`, and then register it in `parser.py`".format(args.model))
+            "You use {}, but bert type models do not have standard logits. Please set cal_logits to 0.".format(args.model))
 
     for prefix in args.prefix:
         assert prefix in registered_prefix, NotImplementedError(
@@ -87,26 +87,47 @@ def getArgs():
             ))
 
     # Set default states_location according to model type
-    if args.states_location == "null":
-        args.states_location = "decoder" if "gpt" in args.model else "encoder"
+    args.states_location = get_states_location_str(args.states_location, args.model, use_auth_token=HF_AUTH_TOKEN)
 
-    if args.states_location == "encoder" and args.cal_hiddenstates:
-        assert "gpt" not in args.model, ValueError("GPT type model does not have encoder. Please set `states_location` to `decoder`.")
-    if args.states_location == "decoder" and args.cal_hiddenstates:
-        assert "bert" not in args.model, ValueError("BERT type model does not have decoder. Please set `states_location` to `encoder`.")
     # Set index into int.
+    num_layers = hf_utils.get_num_hidden_layers(args.model)
     for i in range(len(args.states_index)):
-        pos_index = int(args.states_index[i]) % models_layer_num[args.model]
+        pos_index = int(args.states_index[i]) % num_layers
         # For decoder, the index lies in [0,layer_num)
         # For encoder, the index lies in [-layer_num, -1]
-        args.states_index[i] = pos_index if args.states_location == "decoder" \
-                                        else pos_index - models_layer_num[args.model]
-        
+        args.states_index[i] = (
+            pos_index if args.states_location == "decoder" else pos_index - num_layers)
 
-        
     print("-------- args --------")
     for key in list(vars(args).keys()):
         print("{}: {}".format(key, vars(args)[key]))
     print("-------- args --------")
 
     return args
+
+
+def get_states_location_str(states_location: str, model_str: str, use_auth_token: Optional[Union[bool, str]] = None) -> str:
+    """Return whether to use encoder or decoder hidden states.
+
+    Args:
+        states_location (str): The location of the hidden states. Can be `encoder`, `decoder`, or `auto`.
+        model_str (str): The model name.
+
+    Returns:
+        str: The location of the hidden states. If "auto", uses the decoder
+        if the model is decoder-only, and the encoder otherwise. Otherwise, uses
+        `states_location`.
+
+    Raises:
+        ValueError: If `states_location` is `encoder` and the model is decoder-only,
+            or if `states_location` is `decoder` and the model is encoder-only.
+    """
+    is_decoder_only = hf_utils.is_decoder_only(model_str, use_auth_token=use_auth_token)
+    if states_location == "auto":
+        states_location = "decoder" if is_decoder_only else "encoder"
+    elif states_location == "encoder" and is_decoder_only:
+        raise ValueError(f"{model_str} does not have an encoder. Please set `states_location` to `decoder`.")
+    if states_location == "decoder" and not is_decoder_only:
+        raise ValueError(f"{model_str} does not have a decoder. Please set `states_location` to `encoder`.")
+
+    return states_location

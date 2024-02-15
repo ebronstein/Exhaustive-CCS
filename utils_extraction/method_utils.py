@@ -677,13 +677,13 @@ def mainResults(
 
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
+    coef, bias = None, None
     if load_classifier_dir_and_name is not None:
         try:
             coef, bias = load_utils.load_params(*load_classifier_dir_and_name)
             if print_more:
                 print("Loaded classifier from", load_classifier_dir_and_name)
         except FileNotFoundError:
-            coef, bias = None, None
             if print_more:
                 print("Classifier not found, will train from scratch")
 
@@ -716,7 +716,7 @@ def mainResults(
         classify_model.fit([w[0] for w in lis], [w[1] for w in lis], weights = weights, **learn_dict)
 
     else:
-        if coef is not None:
+        if load_classifier_dir_and_name is not None and coef is not None:
             classify_model = myClassifyModel.from_coef_and_bias(
                 classification_method, coef, bias=bias, print_more=print_more)
         else:

@@ -1,8 +1,12 @@
-import torch
-import numpy as np
 import functools
-from utils_generation.save_utils import saveArray, saveRecords
 import time
+
+import numpy as np
+import torch
+
+from utils_generation import hf_utils
+from utils_generation.hf_auth_token import HF_AUTH_TOKEN
+from utils_generation.save_utils import saveArray, saveRecords
 
 
 def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
@@ -23,6 +27,10 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
     } for key in frame_dict.keys()]
 
     mdl_name = args.model
+    is_encoder_only = hf_utils.is_encoder_only(
+        mdl_name, model_cfg=model.config, use_auth_token=HF_AUTH_TOKEN)
+    is_decoder_only = hf_utils.is_decoder_only(
+        mdl_name, model_cfg=model.config, use_auth_token=HF_AUTH_TOKEN)
     tokenize = functools.partial(getToken, tokenizer=tokenizer)
     with torch.no_grad():
         pad_answer = tokenize("")
@@ -42,7 +50,7 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
 
                 # Loop over data points
                 for idx in range(len(frame)):
-                    if "gpt" in mdl_name or "bert" in mdl_name:
+                    if is_decoder_only or is_encoder_only:
                         ans_list = getDataPoint(frame, idx, "selection")
                         ans_token = [tokenize(w) for w in ans_list]
 
@@ -64,7 +72,7 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                         # calculate the logits
                         logits = [
                             model(input_ids, labels=w)["logits"] for w in ans_token]
-                        
+
                         logit_token = ans_token
 
                     else:
@@ -77,8 +85,9 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                         probs = getLogProbs(logits, ans_token, mdl_name)
                         log_probs_list.append(toNP(probs))
                     if args.cal_logits:
-                        
-                        logits_list.append(toNP(getLogits(logits, logit_token, mdl_name)))
+                        # Use the token at one position earlier if the model is
+                        # decoder-only.
+                        logits_list.append(toNP(getLogits(logits, logit_token, mdl_name, one_prev=is_decoder_only)))
 
                 # Essemble and save
                 if args.cal_zeroshot:
@@ -92,10 +101,10 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                     if args.print_more:
                         print(
                             "Finish calculating the zero-shot accuracy for {} data in {}.".format(len(frame), key))
-                
+
                 # save logits
                 if args.cal_logits:
-                    # notice that logits should be num_data * vocab_size!!! 
+                    # notice that logits should be num_data * vocab_size!!!
                     logits = np.stack(logits_list, axis = 0)
 
                     saveArray([logits], ["logits"], key, args)
@@ -103,7 +112,7 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                     if args.print_more:
                         print(
                             "Finish generating logits for {} data in {}. Shape of logits is {}.".format(len(frame), key, logits.shape))
-                
+
 
             # This part corresponds to hidden states generation
             if args.cal_hiddenstates:
@@ -112,16 +121,18 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                     print("Generating {} hidden states for {}. Layer = {}".format(
                         args.states_location, mdl_name, args.states_index
                     ))
-                if args.states_location == "decoder":  # In suce case, the program should generate decoder hidden states
-                    assert "T0" in mdl_name or "t5" in mdl_name or "gpt" in mdl_name, NotImplementedError(
-                        "BERT does not have decoder. Relevant args: model={}, states_location={}.".format(
-                            mdl_name, args.states_location
-                    )) 
-                if args.states_location == "encoder":
-                    assert "gpt" not in mdl_name, NotImplementedError(
-                        "GPT model does not have encoder. Relevant args: model={}, states_location={}.".format(
+
+                if args.states_location == "decoder" and is_encoder_only:  # In suce case, the program should generate decoder hidden states
+                    raise ValueError(
+                        "Model does not have decoder. Relevant args: model={}, states_location={}.".format(
                             mdl_name, args.states_location
                     ))
+                elif args.states_location == "encoder" and is_decoder_only:
+                    raise ValueError(
+                        "Model does not have encoder. Relevant args: model={}, states_location={}.".format(
+                            mdl_name, args.states_location
+                    ))
+
                 for idx in range(len(frame)):
                     # calculate the hidden states
                     if "T0" in mdl_name or "unifiedqa" in mdl_name or "t5" in mdl_name:
@@ -138,10 +149,10 @@ def calZeroAndHiddenStates(model, tokenizer, frame_dict, args):
                             # calculate the hidden states and take the layer `state_idx`
                             hidden_states_paired = [
                                 model(input_ids, labels=ans, output_hidden_states=True).decoder_hidden_states for ans in ans_token]
-                    elif "gpt" in mdl_name or "bert" in mdl_name:
+                    elif is_decoder_only or is_encoder_only:
                         ids_paired = [tokenize(getDataPoint(
                             frame, idx, w)) for w in ["0", "1"]]
-                        # Notice that since gpt and bert only have either decoder or encoder, we don't need to specify which one to use.
+                        # Since these models only have either decoder or encoder, we don't need to specify which one to use.
                         hidden_states_paired = [
                             model(ids, output_hidden_states=True).hidden_states for ids in ids_paired]
                     else:
@@ -205,19 +216,20 @@ def getLogProbs(logits, ans_token, mdl_name):
             if `mdl_name` == gpt, then does not consider the last token either.
             if `mdl_name` == roberta or deberta, then logits are just NLI ([0] is contradiction and [-1] is entailment. Directly return [-1] - [0])
 
-        Return a list, and each element corresponds to the log_probs of answering with this answer. 
+        Return a list, and each element corresponds to the log_probs of answering with this answer.
 
         Eaxmple:
             mdl_name = "T0pp"   # Assume we use T0pp, then when generating logits we need to provide labels, as shown below.
             ans_list = ["negative", "positive"]
             ans_token = [getToken(w, tokenizer) for w in ans_list]
             logits = [model(question, labels = w)["logits"] for w in ans_token]
-            
+
             logprobs = getLogProbs(logits, ans_token, mdl_name)
     '''
 
     logits = [w[0] for w in logits] if len(logits[0].shape) == 3 else logits
-    if "gpt" in mdl_name:
+    # TODO: check if we should ignore the last token for Llama.
+    if "gpt" in mdl_name or "llama" in mdl_name:
         return [torch.mean(logit.log_softmax(dim=-1)[range(-ans.shape[1] - 1, -1), ans[0]])
                 for logit, ans in zip(logits, ans_token)]
     elif "bert" in mdl_name:
@@ -240,7 +252,7 @@ def getFirstDiff(x, y):
             return i
     return minlen
 
-def getLogits(logits, token_lis, mdl_name):
+def getLogits(logits, token_lis, mdl_name, one_prev: bool):
     '''
         This function takes the logits output by the model, the list of tokens and the model name.
         `logits` is a list, and each element is a tensor with shape `1 * #tokens * vocav_size`.
@@ -248,7 +260,7 @@ def getLogits(logits, token_lis, mdl_name):
         `mdl_name` is the name of the model. The behavior of function will change according to this.
 
         Return the correct logits sliece, i.e. the logits of token that is going to make the first different prediction between two answers.
-        
+
         Example:
             mdl_name = "gpt-j-6B" # assume we use gpt type model here
             ans_list = ["negative", "positive"]
@@ -260,9 +272,10 @@ def getLogits(logits, token_lis, mdl_name):
 
     '''
     diff = getFirstDiff(token_lis[0][0], token_lis[1][0])
-    diff = diff - 1 if "gpt" in mdl_name else diff
+    # If one_prev is True, then we should use the previous token
+    diff = diff - 1 if one_prev else diff
     return logits[0][0, diff, :]
-    
+
 
 def toNP(x):
     if type(x) == list:
