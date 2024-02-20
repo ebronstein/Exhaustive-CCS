@@ -109,7 +109,6 @@ def sacred_config():
     num_layers = hf_utils.get_num_hidden_layers(model)
     # File name where zero-shot results will be saved.
     zero: str = "zero_shot"
-    # TODO: remove seed
     seed: int = 0
     prompt_save_level: Literal["single", "all"] = "all"
     save_states: bool = True
@@ -143,7 +142,6 @@ def _convert_dogmatics_to_standard(obj: Any) -> Any:
 
 def _format_config(config: dict) -> dict:
     config = _convert_dogmatics_to_standard(config)
-    breakpoint()
 
     # Convert single strings to lists.
     for key in ["prefix", "datasets", "method_list"]:
