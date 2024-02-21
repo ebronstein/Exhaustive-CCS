@@ -1,42 +1,123 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
 
-from utils_generation.save_utils import get_model_short_name
-
-######## JSON Load ########
-json_dir = "./registration"
-
-with open("{}.json".format(json_dir), "r") as f:
-    global_dict = json.load(f)
-registered_dataset_list = global_dict["dataset_list"]
-registered_prefix = global_dict["registered_prefix"]
+from utils.file_utils import get_model_short_name
+from utils_generation.save_utils import maybeAppendProjectSuffix
 
 
-def parse_generation_dir(generation_dir: str) -> Optional[tuple[str, str, str, str, str, str]]:
+def get_exp_dir(
+    save_dir: str,
+    name: str,
+    model: str,
+    train_sets: Union[str, list[str]],
+    seed: int,
+):
+    model_short_name = get_model_short_name(model)
+    if isinstance(train_sets, str):
+        train_sets_str = train_sets
+    else:
+        train_sets_str = "+".join(train_sets)
+    return os.path.join(
+        save_dir, name, model_short_name, train_sets_str, f"seed_{seed}"
+    )
+
+
+def get_eval_dir(run_dir: str, dataset: str, seed: int, run_id: int) -> str:
+    return os.path.join(run_dir, "eval", dataset, f"seed_{seed}", run_id)
+
+
+def make_params_dir(run_dir: str) -> None:
+    params_dir = os.path.join(run_dir, "params")
+    os.makedirs(params_dir)
+
+
+def get_train_results_path(run_dir: str) -> str:
+    return os.path.join(run_dir, "train.csv")
+
+
+def get_eval_results_path(
+    run_dir: str, dataset: str, seed: int, run_id: int
+) -> str:
+    eval_dir = get_eval_dir(run_dir, dataset, seed, run_id)
+    return os.path.join(eval_dir, "eval.csv")
+
+
+def get_probs_save_path(
+    eval_dir: str, method: str, project_along_mean_diff: bool, prompt_idx: int
+):
+    """Returns the path to the directory where the classifier probabilities are saved."""
+    method_str = maybeAppendProjectSuffix(method, project_along_mean_diff)
+    filename = f"probs_{method_str}_{prompt_idx}.csv"
+    return os.path.join(eval_dir, filename)
+
+
+def get_params_dir(run_dir, method, prefix):
+    return os.path.join(run_dir, "params", f"{method}_{prefix}")
+
+
+# TODO: delete this eventually.
+def get_results_save_path(root_dir, model, prefix, seed):
+    model_short_name = get_model_short_name(model)
+    return os.path.join(
+        root_dir, "{}_{}_{}.csv".format(model_short_name, prefix, seed)
+    )
+
+
+def parse_generation_dir(
+    generation_dir: str,
+) -> Optional[tuple[str, str, str, str, str, str]]:
     """Parse a generation directory to extract its parameters."""
     parts = generation_dir.split("_")
     if len(parts) != 6:
         return None
 
-    short_model_name, dataset, num_examples, prompt_idx, confusion, location = parts
+    short_model_name, dataset, num_examples, prompt_idx, confusion, location = (
+        parts
+    )
     prompt_idx = int(prompt_idx.replace("prompt", ""))
     num_examples = int(num_examples)
-    return short_model_name, dataset, num_examples, prompt_idx, confusion, location
+    return (
+        short_model_name,
+        dataset,
+        num_examples,
+        prompt_idx,
+        confusion,
+        location,
+    )
 
 
-def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idxs: Optional[list[int]] = None):
+def getDirList(
+    mdl,
+    set_name,
+    load_dir,
+    data_num,
+    confusion,
+    place,
+    prompt_idxs: Optional[list[int]] = None,
+):
     target_short_model_name = get_model_short_name(mdl)
     gen_dirs = []
-    subdirs = [d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))]
+    subdirs = [
+        d
+        for d in os.listdir(load_dir)
+        if os.path.isdir(os.path.join(load_dir, d))
+    ]
     for gen_dir in subdirs:
         parts = parse_generation_dir(gen_dir)
         if parts is None:
             continue
-        short_model_name, dataset, num_examples, prompt_idx, confusion_, location = parts
+        (
+            short_model_name,
+            dataset,
+            num_examples,
+            prompt_idx,
+            confusion_,
+            location,
+        ) = parts
         if (
             short_model_name == target_short_model_name
             and dataset == set_name
@@ -51,29 +132,45 @@ def getDirList(mdl, set_name, load_dir, data_num, confusion, place, prompt_idxs:
 
 
 def organizeStates(lis, mode):
-    '''
-        Whether to do minus, to concat or do nothing
-    '''
+    """
+    Whether to do minus, to concat or do nothing
+    """
     if mode in ["0", "1"]:
         return lis[int(mode)]
     elif mode == "minus":
         return lis[0] - lis[1]
     elif mode == "concat":
-        return np.concatenate(lis, axis = -1)
+        return np.concatenate(lis, axis=-1)
     else:
         raise NotImplementedError("This mode is not supported.")
 
-def normalize(data, scale =True, demean = True):
+
+def normalize(data, scale=True, demean=True):
     # demean the array and rescale each data point
-    data = data - np.mean(data, axis = 0) if demean else data
+    data = data - np.mean(data, axis=0) if demean else data
     if not scale:
         return data
     norm = np.linalg.norm(data, axis=1)
     avgnorm = np.mean(norm)
     return data / avgnorm * np.sqrt(data.shape[1])
 
-def loadHiddenStates(mdl, set_name, load_dir, promtpt_idx, location = "encoder", layer = -1, data_num = 1000, confusion = "normal", place = "last", scale = True, demean = True, mode = "minus", verbose = True):
-    '''Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
+
+def loadHiddenStates(
+    mdl,
+    set_name,
+    load_dir,
+    promtpt_idx,
+    location="encoder",
+    layer=-1,
+    data_num=1000,
+    confusion="normal",
+    place="last",
+    scale=True,
+    demean=True,
+    mode="minus",
+    verbose=True,
+):
+    """Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
 
     if mode == minus, then get h - h'
     if mode == concat, then get np.concatenate([h,h'])
@@ -81,39 +178,71 @@ def loadHiddenStates(mdl, set_name, load_dir, promtpt_idx, location = "encoder",
 
     Raises:
         ValueError: If no hidden states are found.
-    '''
-    dir_list = getDirList(mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx)
+    """
+    dir_list = getDirList(
+        mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx
+    )
     if not dir_list:
         raise ValueError(
             "No hidden states found for {} {} {} {} {} {} {}".format(
-                mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx))
+                mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx
+            )
+        )
 
     append_list = ["_" + location + str(layer) for _ in dir_list]
 
     hidden_states = [
-                        organizeStates(
-                            [np.load(os.path.join(w, "0{}.npy".format(app))),
-                            np.load(os.path.join(w, "1{}.npy".format(app)))],
-                            mode = mode)
-                        for w, app in zip(dir_list, append_list)
-                    ]
+        organizeStates(
+            [
+                np.load(os.path.join(w, "0{}.npy".format(app))),
+                np.load(os.path.join(w, "1{}.npy".format(app))),
+            ],
+            mode=mode,
+        )
+        for w, app in zip(dir_list, append_list)
+    ]
 
     # normalize
     hidden_states = [normalize(w, scale, demean) for w in hidden_states]
     if verbose:
         hs_shape = hidden_states[0].shape if hidden_states else "None"
-        print("{} prompts for {}, with shape {}".format(len(hidden_states), set_name, hs_shape))
-    labels = [np.array(pd.read_csv(os.path.join(w, "frame.csv"))["label"].to_list()) for w in dir_list]
+        print(
+            "{} prompts for {}, with shape {}".format(
+                len(hidden_states), set_name, hs_shape
+            )
+        )
+    labels = [
+        np.array(pd.read_csv(os.path.join(w, "frame.csv"))["label"].to_list())
+        for w in dir_list
+    ]
 
-    return [(u,v) for u,v in zip(hidden_states, labels)]
+    return [(u, v) for u, v in zip(hidden_states, labels)]
 
-def getPermutation(data_list, rate = 0.6):
+
+def getPermutation(data_list, rate=0.6):
     length = len(data_list[0][1])
     permutation = np.random.permutation(range(length)).reshape(-1)
-    return [permutation[: int(length * rate)], permutation[int(length * rate):]]
+    return [
+        permutation[: int(length * rate)],
+        permutation[int(length * rate) :],
+    ]
 
 
-def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location=None, layer=-1, prompt_dict = None, data_num = 1000, scale = True, demean = True, mode = "minus", verbose = True):
+def getDic(
+    load_dir,
+    mdl_name,
+    dataset_list,
+    prefix="normal",
+    location=None,
+    layer=-1,
+    prompt_dict=None,
+    data_num=1000,
+    scale=True,
+    demean=True,
+    mode="minus",
+    verbose=True,
+    logger=None,
+):
     """Loads hidden states and labels.
 
     Args:
@@ -134,15 +263,53 @@ def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location=None, l
         permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.
     """
     if location not in ["encoder", "decoder"]:
-        raise ValueError(f"Location must be either 'encoder' or 'decoder', got {location}")
+        raise ValueError(
+            f"Location must be either 'encoder' or 'decoder', got {location}"
+        )
     elif location == "decoder" and layer < 0:
         raise ValueError(f"Decoder layer must be non-negative, got {layer}.")
 
-    print("start loading {} hidden states {} for {} with {} prefix. Prompt_dict: {}, Scale: {}, Demean: {}, Mode: {}".format(location, layer, mdl_name, prefix, prompt_dict if prompt_dict is not None else "ALL", scale, demean, mode))
-    prompt_dict = prompt_dict if prompt_dict is not None else {key: None for key in dataset_list}
-    data_dict = {set_name: loadHiddenStates(mdl_name, set_name, load_dir, prompt_dict[set_name], location, layer, data_num = data_num, confusion = prefix, scale = scale, demean = demean, mode = mode, verbose = verbose) for set_name in dataset_list}
-    permutation_dict = {set_name: getPermutation(data_dict[set_name]) for set_name in dataset_list}
+    if verbose and logger is not None:
+        logger.info(
+            "start loading {} hidden states {} for {} with {} prefix. Prompt_dict: {}, Scale: {}, Demean: {}, Mode: {}".format(
+                location,
+                layer,
+                mdl_name,
+                prefix,
+                prompt_dict if prompt_dict is not None else "ALL",
+                scale,
+                demean,
+                mode,
+            )
+        )
+    prompt_dict = (
+        prompt_dict
+        if prompt_dict is not None
+        else {key: None for key in dataset_list}
+    )
+    data_dict = {
+        set_name: loadHiddenStates(
+            mdl_name,
+            set_name,
+            load_dir,
+            prompt_dict[set_name],
+            location,
+            layer,
+            data_num=data_num,
+            confusion=prefix,
+            scale=scale,
+            demean=demean,
+            mode=mode,
+            verbose=verbose,
+        )
+        for set_name in dataset_list
+    }
+    permutation_dict = {
+        set_name: getPermutation(data_dict[set_name])
+        for set_name in dataset_list
+    }
     return data_dict, permutation_dict
+
 
 # print("------ Func: get_zeros_acc ------\n\
 # ## Input = csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False\n\
@@ -155,10 +322,20 @@ def getDic(load_dir, mdl_name, dataset_list, prefix = "normal", location=None, l
 # ## Output = number / dict, depending on `avg`\n\
 # "
 # )
-def get_zeros_acc(load_dir, csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False):
+def get_zeros_acc(
+    load_dir,
+    csv_name,
+    mdl_name,
+    dataset_list,
+    prefix,
+    prompt_dict=None,
+    avg=False,
+):
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
-    subzeros = zeros.loc[(zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)]
+    subzeros = zeros.loc[
+        (zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)
+    ]
 
     # Extend prompt_dict to ALL dict if it is None
     if prompt_dict is None:
@@ -167,9 +344,10 @@ def get_zeros_acc(load_dir, csv_name, mdl_name, dataset_list, prefix, prompt_dic
     # Extract accuracy, each key is a set name and value is a list of acc
     acc_dict = {}
     for dataset in dataset_list:
-        filtered_csv = subzeros.loc[(subzeros["dataset"] == dataset) & (
-            subzeros["prompt_idx"].isin(prompt_dict[dataset])
-        )]
+        filtered_csv = subzeros.loc[
+            (subzeros["dataset"] == dataset)
+            & (subzeros["prompt_idx"].isin(prompt_dict[dataset]))
+        ]
         acc_dict[dataset] = filtered_csv["calibrated"].to_list()
 
     if not avg:
@@ -186,5 +364,7 @@ def load_params(save_dir, name) -> tuple[np.ndarray, Optional[np.ndarray]]:
     if not os.path.exists(coef_path):
         raise FileNotFoundError("No params found for {}".format(name))
     coef = np.load(coef_path)
-    intercept = np.load(intercept_path) if os.path.exists(intercept_path) else None
+    intercept = (
+        np.load(intercept_path) if os.path.exists(intercept_path) else None
+    )
     return coef, intercept

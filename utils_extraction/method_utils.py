@@ -263,6 +263,7 @@ class ConsistencyMethod(object):
         predictions = (avg_confidence >= 0.5).astype(int)[:, 0]
         acc = (predictions == label).mean()
 
+        # TODO: move this out of this function
         if save_file is not None:
             # save (p0, p1, label) to file using pandas
             df = pd.DataFrame({"p0": p0[:, 0], "p1": p1[:, 0], "label": label})
@@ -552,6 +553,7 @@ class myClassifyModel(LogisticRegression):
             return super().predict_proba(data)[..., 1]
 
     def score(self, data, label, getloss=False, sample_weight=None, save_file=None):
+        # TODO: move file saving out of this function.
         if self.method == "KMeans":
             if save_file is not None:
                 print("save_file not supported for KMeans")
@@ -647,10 +649,13 @@ def mainResults(
     classification_method = "BSS",                 # can be LR, TPC and BSS
     print_more = False,
     learn_dict = {},
-    save_file_prefix=None,  # if not None, will save the prediction to "{save_file_prefix}/{test_set}{prompt_idx}_{method}.csv"
+    save_probs: bool=True,
     test_on_train=False,  # if true, will use the train set to test the model
     constraints=None,  # if not None, will use the constraints to do the projection (CCS only)
     project_along_mean_diff=False,  # if true, will project the data along the mean difference of the two classes
+    run_dir: str,  # root directory for the Sacred Run
+    seed: int,
+    run_id: int,  # Sacred Run ID
 ):
 
     start = time.time()
@@ -728,8 +733,6 @@ def mainResults(
 
             classify_model.fit(data, labels)
 
-
-
     res, lss, ece_dict = {}, {}, {}
     for key, lis in test_dict.items():
         res[key], lss[key], ece_dict[key] = [], [], []
@@ -747,9 +750,13 @@ def mainResults(
             if classification_method == "CCS":
                 data = [data[:,:data.shape[1]//2], data[:,data.shape[1]//2:]]
 
-            save_file = f"{save_file_prefix}/{key}_{prompt_idx}_{method}.csv" if save_file_prefix else None
-            if save_file:
-                os.makedirs(os.path.dirname(save_file), exist_ok=True)
+            # TODO: save probs directly to the given path instead of to a CSV
+            # in the directory.
+            if save_eval:
+                eval_dir = load_utils.get_eval_dir(run_dir, key, seed, run_id)
+                if not os.path.exists(eval_dir):
+                    os.makedirs(eval_dir, exist_ok=True)
+                save_file = load_utils.get_probs_save_path(run_dir, key, seed, run_id, method, project_along_mean_diff, prompt_idx)
 
             acc, losses = classify_model.score(data, label, getloss = True, save_file=save_file)
             predicted_probs = classify_model.predict_probs(data).flatten()
