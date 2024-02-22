@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,6 +11,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 
+from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
 from utils_extraction import load_utils, metrics
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
@@ -21,18 +22,24 @@ def is_method_unsupervised(method):
     return method in UNSUPERVISED_METHODS or method.startswith("RCCS")
 
 
-class myReduction():
-    def __init__(self, method, n_components, print_more=False, svd_solver="full") -> None:
+class myReduction:
+    def __init__(
+        self, method, n_components, print_more=False, svd_solver="full"
+    ) -> None:
         self.n_components = n_components
         self.method = method
-        assert method in ["PCA", "UMAP"], NotImplementedError("Only support PCA and UMAP to project data.")
+        assert method in ["PCA", "UMAP"], NotImplementedError(
+            "Only support PCA and UMAP to project data."
+        )
         self.print_more = print_more
         self.num_feature = None
         if n_components != -1:
             if self.method == "PCA":
-                self.model = PCA(n_components=n_components, svd_solver=svd_solver)
+                self.model = PCA(
+                    n_components=n_components, svd_solver=svd_solver
+                )
             elif self.method == "UMAP":
-                self.model = umap.UMAP(n_components = n_components)
+                self.model = umap.UMAP(n_components=n_components)
 
     def fit(self, data):
         self.num_feature = data.shape[1]
@@ -41,20 +48,30 @@ class myReduction():
                 print("n_components = -1, will return identity")
 
         else:
-            if self.method == "UMAP":   # for UMAP, explicitly centralize the data
-                data = data - np.mean(data, axis = 0)
+            if (
+                self.method == "UMAP"
+            ):  # for UMAP, explicitly centralize the data
+                data = data - np.mean(data, axis=0)
             self.model.fit(data)
-            if self.method == "PCA":    # for PCA, explicitly set mean to None
+            if self.method == "PCA":  # for PCA, explicitly set mean to None
                 self.model.mean_ = None
                 if self.print_more:
                     print("Set the mean of PCA model to `None`.")
             if self.print_more:
-                if self.method == 'PCA':
-                    print("PCA fit data. dim = {} and #data = {}, var is {}".format(
-                        self.n_components, data.shape, sum(self.model.explained_variance_ratio_)))
+                if self.method == "PCA":
+                    print(
+                        "PCA fit data. dim = {} and #data = {}, var is {}".format(
+                            self.n_components,
+                            data.shape,
+                            sum(self.model.explained_variance_ratio_),
+                        )
+                    )
                 else:
-                    print("UMAP fit data. dim = {} and #data = {}.".format(
-                        self.n_components, data.shape))
+                    print(
+                        "UMAP fit data. dim = {} and #data = {}.".format(
+                            self.n_components, data.shape
+                        )
+                    )
 
     def getDirection(self):
         # return the component with shape (n_components, n_features)
@@ -62,7 +79,6 @@ class myReduction():
             return np.eye(self.num_feature)
         else:
             return self.model.components_
-
 
     def transform(self, data):
         if self.n_components == -1:
@@ -74,30 +90,40 @@ class myReduction():
             return self.n_components
         return getattr(self.model, __name)
 
-def getSingleLoss(x, verbose = False):
+
+def getSingleLoss(x, verbose=False):
     # x: shape (n, 1)
     x1 = x[x < 0]
     x2 = x[x >= 0]
 
     if verbose:
-        print("var(x1) = {}, var(x2) = {}, var(x) = {}".format(x1.var(), x2.var(), x.var()))
+        print(
+            "var(x1) = {}, var(x2) = {}, var(x) = {}".format(
+                x1.var(), x2.var(), x.var()
+            )
+        )
     return (x1.var() + x2.var()) / x.var()
 
-def getLoss(z, weights, verbose = False):
+
+def getLoss(z, weights, verbose=False):
     # weighted loss according to `weights`
     return sum([u * getSingleLoss(x, verbose) for u, x in zip(weights, z)])
+
 
 def get_all_data(data_dict):
     all_data, all_labels = [], []
     for dataset in data_dict.keys():
-        raw_data = np.concatenate([w[0] for w in data_dict[dataset]],axis=0)
+        raw_data = np.concatenate([w[0] for w in data_dict[dataset]], axis=0)
         label = np.concatenate([w[1] for w in data_dict[dataset]])
 
         all_data.append(raw_data)
         all_labels.append(label)
     all_data, all_labels = np.concatenate(all_data), np.concatenate(all_labels)
 
-    hs0, hs1 = all_data[:, :all_data.shape[-1] // 2], all_data[:, all_data.shape[-1] // 2:]
+    hs0, hs1 = (
+        all_data[:, : all_data.shape[-1] // 2],
+        all_data[:, all_data.shape[-1] // 2 :],
+    )
 
     return hs0, hs1, all_labels
 
@@ -106,9 +132,13 @@ def project(x, along_directions):
     """Project x along the along_directions.
 
     x of shape (..., d) and along_directions of shape (n_directions, d)"""
-    if isinstance(x, torch.Tensor) and isinstance(along_directions, torch.Tensor):
+    if isinstance(x, torch.Tensor) and isinstance(
+        along_directions, torch.Tensor
+    ):
         inner_products = torch.einsum("...d,nd->...n", x, along_directions)
-        return x - torch.einsum("...n,nd->...d", inner_products, along_directions)
+        return x - torch.einsum(
+            "...n,nd->...d", inner_products, along_directions
+        )
     elif isinstance(x, np.ndarray) and isinstance(along_directions, np.ndarray):
         inner_products = np.einsum("...d,nd->...n", x, along_directions)
         return x - np.einsum("...n,nd->...d", inner_products, along_directions)
@@ -130,7 +160,9 @@ def project_coeff(coef_and_bias, along_directions):
     elif isinstance(coef_and_bias, np.ndarray):
         return np.concatenate([new_coef, bias[:, None]], axis=-1)
     else:
-        raise ValueError("coef_and_bias should be either torch.Tensor or np.ndarray")
+        raise ValueError(
+            "coef_and_bias should be either torch.Tensor or np.ndarray"
+        )
 
 
 def normalize(directions):
@@ -138,17 +170,22 @@ def normalize(directions):
 
 
 def assert_close_to_orthonormal(directions, atol=1e-3):
-    assert np.allclose(directions @ directions.T, np.eye(directions.shape[0]), atol=atol), "Not orthonormal"
+    assert np.allclose(
+        directions @ directions.T, np.eye(directions.shape[0]), atol=atol
+    ), "Not orthonormal"
 
 
 class ConsistencyMethod(object):
-    def __init__(self, verbose=False, include_bias=True, no_train=False, constraints=None):
+    def __init__(
+        self, verbose=False, include_bias=True, no_train=False, constraints=None
+    ):
         """The main CCS class
         verbose: whether to be verbose in train
         include_bias: whether to include bias in the linear model
         no_train: whether to train the linear model (otherwise just return randomly initialized weights)
         constraints: an optional matrix of shape (n_directions, n_features)*
-            of unormalized but orthogonal directions which the linear model should be orthogonal to"""
+            of unormalized but orthogonal directions which the linear model should be orthogonal to
+        """
         self.include_bias = include_bias
         self.verbose = verbose
         self.no_train = no_train
@@ -166,7 +203,9 @@ class ConsistencyMethod(object):
         if coef.ndim == 1:
             coef = coef[None, :]
         elif coef.ndim > 2:
-            raise ValueError(f"coef should have at most 2 dimensions, found {coef.ndim}")
+            raise ValueError(
+                f"coef should have at most 2 dimensions, found {coef.ndim}"
+            )
 
         if bias is not None:
             bias = np.asarray(bias)
@@ -194,7 +233,6 @@ class ConsistencyMethod(object):
             return None
         return self.best_theta[:, -1]
 
-
     def add_ones_dimension(self, h):
         if self.include_bias:
             return np.concatenate([h, np.ones(h.shape[0])[:, None]], axis=-1)
@@ -209,16 +247,14 @@ class ConsistencyMethod(object):
         """
         min_p = torch.min(p0, p1)
         return (min_p**2).mean(0)
-        #return (min_p).mean(0)**2  # seems a bit worse
-
+        # return (min_p).mean(0)**2  # seems a bit worse
 
     def get_similarity_loss(self, p0, p1):
         """
         Assumes p0 and p1 are each a tensor of probabilities of shape (n,1) or (n,)
         Encourages p0 to be close to 1-p1 and vice versa
         """
-        return ((p0 - (1-p1))**2).mean(0)
-
+        return ((p0 - (1 - p1)) ** 2).mean(0)
 
     def get_loss(self, p0, p1):
         """
@@ -235,13 +271,19 @@ class ConsistencyMethod(object):
         similarity_loss = self.get_similarity_loss(p0, p1)
         confidence_loss = self.get_confidence_loss(p0, p1)
 
-        return similarity_loss + confidence_loss, similarity_loss, confidence_loss
+        return (
+            similarity_loss + confidence_loss,
+            similarity_loss,
+            confidence_loss,
+        )
 
     # return the probability tuple (p0, p1)
-    def transform(self, data: list, theta_np = None):
+    def transform(self, data: list, theta_np=None):
         if theta_np is None:
             theta_np = self.best_theta
-        z0, z1 = torch.tensor(self.add_ones_dimension(data[0]).dot(theta_np.T)), torch.tensor(self.add_ones_dimension(data[1]).dot(theta_np.T))
+        z0, z1 = torch.tensor(
+            self.add_ones_dimension(data[0]).dot(theta_np.T)
+        ), torch.tensor(self.add_ones_dimension(data[1]).dot(theta_np.T))
         p0, p1 = torch.sigmoid(z0).numpy(), torch.sigmoid(z1).numpy()
 
         return p0, p1
@@ -249,15 +291,17 @@ class ConsistencyMethod(object):
     def predict_probs(self, data):
         """Predicts class 1 probabilities for data."""
         p0, p1 = self.transform(data, self.best_theta)
-        return 0.5*(p1 + (1-p0))
+        return 0.5 * (p1 + (1 - p0))
 
     # Return the accuracy of (data, label)
-    def get_acc(self, theta_np, data: list, label, getloss=False, save_file=None):
+    def get_acc(
+        self, theta_np, data: list, label, getloss=False, save_file=None
+    ):
         """
         Computes the accuracy of a given direction theta_np represented as a numpy array
         """
         p0, p1 = self.transform(data, theta_np)
-        avg_confidence = 0.5*(p1 + (1-p0))
+        avg_confidence = 0.5 * (p1 + (1 - p0))
 
         label = label.reshape(-1)
         predictions = (avg_confidence >= 0.5).astype(int)[:, 0]
@@ -270,10 +314,12 @@ class ConsistencyMethod(object):
             df.to_csv(save_file, index=False)
 
         if getloss:
-            losses = [l.cpu().detach().item() for l in self.get_losses(torch.tensor(p0), torch.tensor(p1))]
+            losses = [
+                l.cpu().detach().item()
+                for l in self.get_losses(torch.tensor(p0), torch.tensor(p1))
+            ]
             return acc, losses
         return acc
-
 
     def train(self):
         """
@@ -281,8 +327,12 @@ class ConsistencyMethod(object):
         """
 
         # convert to tensors
-        x0 = torch.tensor(self.x0, dtype=torch.float, requires_grad=False, device=self.device)
-        x1 = torch.tensor(self.x1, dtype=torch.float, requires_grad=False, device=self.device)
+        x0 = torch.tensor(
+            self.x0, dtype=torch.float, requires_grad=False, device=self.device
+        )
+        x1 = torch.tensor(
+            self.x1, dtype=torch.float, requires_grad=False, device=self.device
+        )
 
         # initialize parameters
         if self.init_theta is None:
@@ -296,10 +346,20 @@ class ConsistencyMethod(object):
         if self.no_train:
             return init_theta, 0
 
-        theta = torch.tensor(init_theta, dtype=torch.float, requires_grad=True, device=self.device)
+        theta = torch.tensor(
+            init_theta,
+            dtype=torch.float,
+            requires_grad=True,
+            device=self.device,
+        )
 
         if self.constraints is not None:
-            constraints_t = torch.tensor(self.constraints, dtype=torch.float, requires_grad=False, device=self.device)
+            constraints_t = torch.tensor(
+                self.constraints,
+                dtype=torch.float,
+                requires_grad=False,
+                device=self.device,
+            )
         else:
             constraints_t = None
 
@@ -350,7 +410,16 @@ class ConsistencyMethod(object):
 
     # seems 50, 20 can significantly reduce overfitting than 1000, 10
     # switch back to 1000 + 10
-    def fit(self, data: list, label, nepochs=1000, ntries=10, lr=1e-2, init_theta=None, device="cuda"):
+    def fit(
+        self,
+        data: list,
+        label,
+        nepochs=1000,
+        ntries=10,
+        lr=1e-2,
+        init_theta=None,
+        device="cuda",
+    ):
         """
         Does ntries attempts at training, with different random initializations
         """
@@ -366,9 +435,11 @@ class ConsistencyMethod(object):
             self.ntries = 1
 
         if self.verbose:
-            print("String fiting data with Prob. nepochs: {}, ntries: {}, lr: {}".format(
-                nepochs, ntries, lr
-            ))
+            print(
+                "String fiting data with Prob. nepochs: {}, ntries: {}, lr: {}".format(
+                    nepochs, ntries, lr
+                )
+            )
         # set up the best loss and best theta found so far
         self.best_loss = np.inf
         self.best_theta = self.init_theta
@@ -387,7 +458,7 @@ class ConsistencyMethod(object):
             theta_np, loss = self.train()
 
             # evaluate
-            acc = self.get_acc(theta_np, data, label, getloss = False)
+            acc = self.get_acc(theta_np, data, label, getloss=False)
 
             # save
             losses.append(loss)
@@ -396,7 +467,11 @@ class ConsistencyMethod(object):
             # see if it's the best run so far
             if loss < self.best_loss:
                 if self.verbose:
-                    print("Found a new best theta. New loss: {:.4f}, new acc: {:.4f}".format(loss, acc))
+                    print(
+                        "Found a new best theta. New loss: {:.4f}, new acc: {:.4f}".format(
+                            loss, acc
+                        )
+                    )
                 self.best_theta = theta_np
                 self.best_loss = loss
                 best_acc = acc
@@ -408,18 +483,22 @@ class ConsistencyMethod(object):
 
     def score(self, data: list, label, getloss=False, save_file=None):
         self.validate_data(data)
-        return self.get_acc(self.best_theta, data, label, getloss, save_file=save_file)
+        return self.get_acc(
+            self.best_theta, data, label, getloss, save_file=save_file
+        )
 
 
 CLASSIFICATION_METHODS = ["TPC", "LR", "BSS", "KMeans"]
 
+
 class myClassifyModel(LogisticRegression):
-    def __init__(self, method, print_more = False):
+    def __init__(self, method, print_more=False):
         if method not in CLASSIFICATION_METHODS:
             raise ValueError(
-                f"currently only support method to be `TPC`, `LR`, 'KMeans` and `BSS`! Got {method}")
+                f"currently only support method to be `TPC`, `LR`, 'KMeans` and `BSS`! Got {method}"
+            )
         self.method = method
-        super(myClassifyModel, self).__init__(max_iter = 10000, n_jobs = 1, C = 0.1)
+        super(myClassifyModel, self).__init__(max_iter=10000, n_jobs=1, C=0.1)
         self.print_more = print_more
 
     @classmethod
@@ -427,29 +506,50 @@ class myClassifyModel(LogisticRegression):
         if method != "LR":
             raise ValueError(
                 "Only logistical regression classification model can be "
-                f"initialized with a coefficient and intercept, got {method}")
+                f"initialized with a coefficient and intercept, got {method}"
+            )
 
         instance = cls(method, **kwargs)
         instance.set_params(coef, bias)
         return instance
 
     def set_params(self, coef, bias):
-        self.classes_ = np.array([0,1])
+        self.classes_ = np.array([0, 1])
         self.intercept_ = bias
         self.coef_ = coef
 
     def get_train_loss(self):
-        assert self.method == "BSS", NotImplementedError("`get_train_loss` supported only when method is `BSS`.")
+        assert self.method == "BSS", NotImplementedError(
+            "`get_train_loss` supported only when method is `BSS`."
+        )
         return self.loss
 
-    def fit(self, data, label, times = 20, use_scheduler = False, weights = None, lr = 1e-1, epochs = 20, device = "cuda"):
+    def fit(
+        self,
+        data,
+        label,
+        times=20,
+        use_scheduler=False,
+        weights=None,
+        lr=1e-1,
+        epochs=20,
+        device="cuda",
+    ):
         if self.method == "LR":
             super().fit(data, label)
             if self.print_more:
-                print("fitting to {} data, acc is {}".format(len(label), self.score(data, label)))
+                print(
+                    "fitting to {} data, acc is {}".format(
+                        len(label), self.score(data, label)
+                    )
+                )
 
         elif self.method == "TPC":
-            assert data.shape[1] == 1, "When `avg` mode is used, #hidden_dim is expected to be 1, but it's {}".format(data.shape[1])
+            assert (
+                data.shape[1] == 1
+            ), "When `avg` mode is used, #hidden_dim is expected to be 1, but it's {}".format(
+                data.shape[1]
+            )
             self.avg = 0.0
             self.sign = 1
 
@@ -458,16 +558,26 @@ class myClassifyModel(LogisticRegression):
                 self.sign = -1
 
             # set to model parameters
-            self.set_params(np.array(self.sign).reshape(1,1), -self.sign * self.avg)
+            self.set_params(
+                np.array(self.sign).reshape(1, 1), -self.sign * self.avg
+            )
 
         elif self.method == "KMeans":
-            self.model = KMeans(n_clusters = 2)
+            self.model = KMeans(n_clusters=2)
             self.model.fit(data)
             if self.print_more:
-                print("fitting to {} data, acc is {}".format(len(label), self.score(data, label)))
+                print(
+                    "fitting to {} data, acc is {}".format(
+                        len(label), self.score(data, label)
+                    )
+                )
 
-        elif self.method == "BSS":    # in this case, `data` will be a list
-            assert type(data) == list, "When using BSS mode, data should be a list instead of {}".format(type(data))
+        elif self.method == "BSS":  # in this case, `data` will be a list
+            assert (
+                type(data) == list
+            ), "When using BSS mode, data should be a list instead of {}".format(
+                type(data)
+            )
 
             x = [torch.tensor(w, device=device) for w in data]
             dim = data[0].shape[1]  # hidden dimension
@@ -475,10 +585,16 @@ class myClassifyModel(LogisticRegression):
             if weights == None:
                 weights = [1 / len(x) for _ in range(len(x))]
             else:
-                assert type(weights) == list and len(weights) == len(x), "Length of `weights` mismatches length of `data`."
-                weights = [w / sum(weights) for w in weights]   # normalize
+                assert type(weights) == list and len(weights) == len(
+                    x
+                ), "Length of `weights` mismatches length of `data`."
+                weights = [w / sum(weights) for w in weights]  # normalize
 
-            sample_weight = [u / w.shape[0] for u, w in zip(weights, data) for _ in range(w.shape[0])]
+            sample_weight = [
+                u / w.shape[0]
+                for u, w in zip(weights, data)
+                for _ in range(w.shape[0])
+            ]
 
             minloss = 1.0
             final_coef = np.random.randn(dim).reshape(1, -1)
@@ -487,10 +603,20 @@ class myClassifyModel(LogisticRegression):
                 init_theta = np.random.randn(dim).reshape(1, -1)
                 init_theta /= np.linalg.norm(init_theta)
 
-                theta = torch.tensor(init_theta, dtype=torch.float, requires_grad=True, device=device)
+                theta = torch.tensor(
+                    init_theta,
+                    dtype=torch.float,
+                    requires_grad=True,
+                    device=device,
+                )
                 optimizer = torch.optim.AdamW([theta], lr=lr)
                 if use_scheduler:
-                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor = 0.5, verbose = self.print_more, min_lr = 1e-6)
+                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        optimizer,
+                        factor=0.5,
+                        verbose=self.print_more,
+                        min_lr=1e-6,
+                    )
 
                 for epoch in range(epochs):
 
@@ -508,10 +634,17 @@ class myClassifyModel(LogisticRegression):
                     if use_scheduler:
                         scheduler.step(loss)
 
-                    if ((epoch + 1) % 50 == 0 and self.print_more) or epoch in [0, epochs - 1]:
-                        theta_np = theta.cpu().detach().numpy().reshape(1, -1)  # same as coef
+                    if ((epoch + 1) % 50 == 0 and self.print_more) or epoch in [
+                        0,
+                        epochs - 1,
+                    ]:
+                        theta_np = (
+                            theta.cpu().detach().numpy().reshape(1, -1)
+                        )  # same as coef
 
-                        projected, gth = np.concatenate([w @ theta_np.T for w in data]).reshape(-1), np.concatenate(label).reshape(-1)
+                        projected, gth = np.concatenate(
+                            [w @ theta_np.T for w in data]
+                        ).reshape(-1), np.concatenate(label).reshape(-1)
 
                         self.avg = 0.0
                         self.sign = 1
@@ -520,8 +653,14 @@ class myClassifyModel(LogisticRegression):
                             self.sign = -1
 
                         # set to model parameters
-                        self.set_params(self.sign * theta_np, -self.sign * self.avg)
-                        acc = self.score(np.concatenate(data, axis = 0), np.concatenate(label), sample_weight)
+                        self.set_params(
+                            self.sign * theta_np, -self.sign * self.avg
+                        )
+                        acc = self.score(
+                            np.concatenate(data, axis=0),
+                            np.concatenate(label),
+                            sample_weight,
+                        )
                         # acc = np.mean([self.score(u, v) for u,v in zip(data, label)])
                         # if self.print_more:
                         #     print("epoch {} acc: {:.2f}, loss: {:.4f}".format(epoch, 100 * acc, loss))
@@ -534,8 +673,18 @@ class myClassifyModel(LogisticRegression):
                     loss = loss.detach().cpu().item()
                     if loss < minloss:
                         if self.print_more:
-                            print("update params, acc is {:.2f}, old loss is {:.4f}, new loss is {:.4f}".format(
-                                100 * self.score(np.concatenate(data, axis = 0), np.concatenate(label), sample_weight), minloss, loss))
+                            print(
+                                "update params, acc is {:.2f}, old loss is {:.4f}, new loss is {:.4f}".format(
+                                    100
+                                    * self.score(
+                                        np.concatenate(data, axis=0),
+                                        np.concatenate(label),
+                                        sample_weight,
+                                    ),
+                                    minloss,
+                                    loss,
+                                )
+                            )
                         minloss = loss
                         final_coef = self.coef_
                         final_bias = self.intercept_
@@ -552,7 +701,9 @@ class myClassifyModel(LogisticRegression):
             # Return the probability of class 1
             return super().predict_proba(data)[..., 1]
 
-    def score(self, data, label, getloss=False, sample_weight=None, save_file=None):
+    def score(
+        self, data, label, getloss=False, sample_weight=None, save_file=None
+    ):
         # TODO: move file saving out of this function.
         if self.method == "KMeans":
             if save_file is not None:
@@ -567,11 +718,13 @@ class myClassifyModel(LogisticRegression):
             if save_file is not None:
                 # compute for save_file
                 predictions = super().predict_proba(data)
-                df = pd.DataFrame({"label": label, "prediction": predictions[:, 1]})
+                df = pd.DataFrame(
+                    {"label": label, "prediction": predictions[:, 1]}
+                )
                 df.to_csv(save_file, index=False)
 
             if sample_weight is not None:
-                acc = super().score(data,label, sample_weight)
+                acc = super().score(data, label, sample_weight)
             else:
                 acc = super().score(data, label)
             if getloss:
@@ -582,43 +735,66 @@ class myClassifyModel(LogisticRegression):
                 return acc, loss
             return acc
 
+
 def getConcat(data_list, axis=0):
     sub_list = [w for w in data_list if w is not None]
-    if sub_list == []:
+    if not sub_list:
         return None
     return np.concatenate(sub_list, axis=axis)
 
-def getPair(target_dict, data_dict, permutation_dict, projection_model, split = "train"):
-    split_idx = 0 if split == "train" else 1
+
+def getPair(
+    target_dict: PromptIndicesDictType,
+    data_dict: DataDictType,
+    permutation_dict: PermutationDictType,
+    projection_model: myReduction,
+    split: Literal["train", "test"] = "train",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Concatenate the data and labels for the desired split.
+
+    `projection_model` is used to transform the hidden states. This may be a
+    noop (e.g., if `projection_model.n_components` is -1).
+
+    Args:
+        target_dict (dict): Dictionary of prompt indices to use for each
+            dataset. Key is dataset name, each value is a list of prompt
+            indices for which the corresponding data and labels are returned.
+        data_dict (dict): Dictionary of hidden states. Key is dataset name, each
+            value is a list with one element per prompt. Each element is a tuple
+            pair of (hidden_states, labels).
+        permutation_dict (dict): Dictionary of permutations. Key is dataset
+            name, value is a tuple pair containing the train split and test
+            split indices.
+        projection_model (myReduction): Projection model used to transform the
+            hidden states.
+        split (str, optional): The desired split. Defaults to "train".
+    """
+    if split == "train":
+        split_idx = 0
+    elif split == "test":
+        split_idx = 1
+    else:
+        raise ValueError(
+            f"split should be either 'train' or 'test', got '{split}'"
+        )
+
     lis = []
     for key, prompt_lis in target_dict.items():
+        # Indices of the desired split for the current dataset.
+        split_indices = permutation_dict[key][split_idx]
         for idx in prompt_lis:
-            lis.append([
-                projection_model.transform(data_dict[key][idx][0][permutation_dict[key][split_idx]]),
-                data_dict[key][idx][1][permutation_dict[key][split_idx]]
-            ]) # each is a data & label paird, selecting the corresponding split
+            hidden_states = data_dict[key][idx][0][split_indices]
+            labels = data_dict[key][idx][1][split_indices]
+            lis.append(
+                [
+                    projection_model.transform(hidden_states),
+                    labels,
+                ]
+            )
 
-    data, label = getConcat([w[0] for w in lis]),  getConcat([w[1] for w in lis])
+    data, label = getConcat([w[0] for w in lis]), getConcat([w[1] for w in lis])
 
     return data, label
-
-
-# print("------ Func: mainResults ------\n\
-# ## Input = (data_dict, permutation_dict, projection_dict, test_dict, train_on)test, n_components, method, print_more = False, learn_dict = {}) ##\n\
-#     data_dict: Dict of hidden states loaded from `getDic()`.\n\
-#     permutation_dict: Dict of permutation loaded from `getDic()`.\n\
-#     projection_dict: Key is set_name, each value is a list of prompt_idx that is used to do projection.\n\
-#     test_dict: Test indexs, results in this list will be return.\n\
-#     projection_method: The method you use to do projection. Can be `PCA` or `UMAP`.\n\
-#     n_components: The dimension you want to reduce to. -1 means no projection will be implemented.\n\
-#     projection_only: Default is false. When set to true, will directly return the `projection_model`, and `res`, `classify_model` will be None.\n\
-#     classification_method: Method used to predict, including LR, TPC and BSS. Default is BSS.\n\
-#     print_more: Whether to print more.\n\
-#     learn_dict: A dict to specify the learning parameters for torch. See class `classify_model` for details.\n\
-# ## Output = (res, projection_model, classify_model) ##\n\
-#     res: a dict (key, acc_list). Key is the name of dataset, and acc_list is a list with each accuracy corresponds to one prompt of set `key`.\n\
-#     projection_model & classify_model: the model after training. Can be used to do any further prediction.\n\
-# ")
 
 
 def project_data_along_axis(data, labels):
@@ -634,35 +810,78 @@ def project_data_along_axis(data, labels):
 
 
 def mainResults(
-    # dict of hidden states, key is set_name, each value is a list with len = #promp_idx
-    data_dict,
-    # dict of permutation, key is set_name, contain 2 array indicating train and test split
-    permutation_dict,
-    # projection dict, key is set_name, each value is a list of prompt_idx being used to do projection
-    projection_dict,
-    test_dict,              # test indexs, results in this list will be return
-    # When set to true, will immediate return after we train the projection_model. res and classify_model will be None.
-    projection_method = "PCA",
-    n_components = 2,           # The dimension you want to reduce to. -1 means no projection will be implemented.
-    projection_only = False,
-    load_classifier_dir_and_name: Optional[tuple[str, str]] = None,  # Optional tuple (root_dir, name) containing the root directory and name of the classifier. If provided, will load the classifier's saved params from "root_dir/params" corresponding to "name". Otherwise, will train the classifier from scratch.
-    classification_method = "BSS",                 # can be LR, TPC and BSS
-    print_more = False,
-    learn_dict = {},
-    save_probs: bool=True,
-    test_on_train=False,  # if true, will use the train set to test the model
-    constraints=None,  # if not None, will use the constraints to do the projection (CCS only)
-    project_along_mean_diff=False,  # if true, will project the data along the mean difference of the two classes
-    run_dir: str,  # root directory for the Sacred Run
-    seed: int,
-    run_id: int,  # Sacred Run ID
+    data_dict: DataDictType,
+    permutation_dict: PermutationDictType,
+    projection_dict: PromptIndicesDictType,
+    test_dict: PromptIndicesDictType,
+    projection_method="PCA",
+    n_components: int = 2,
+    projection_only=False,
+    load_classifier_dir_and_name: Optional[tuple[str, str]] = None,
+    classification_method="BSS",
+    print_more=False,
+    learn_dict={},
+    save_probs=True,
+    test_on_train=False,
+    constraints=None,
+    project_along_mean_diff=False,
+    run_dir: Optional[str] = None,
+    seed: Optional[str] = None,
+    run_id: Optional[str] = None,
 ):
+    """
+    Calculate the main results.
 
+    Args:
+        data_dict (dict): Dictionary of hidden states and labels. Key is dataset
+            name, each value is a list with one element per prompt. Each element
+            is a tuple pair of (hidden_states, labels).
+        permutation_dict (dict): Dictionary of train/test split indices. Key is
+            dataset name, value is a tuple pair containing the train split and
+            test split indices.
+        projection_dict (dict): Dictionary of prompt indices for projection.
+            Key is dataset name, each value is a list of prompt indices used to
+            do projection.
+        test_dict (dict): Dictionary of test datasets and prompt indices on
+            which the method is evaluated. Key is dataset name, each value is a
+            list of prompt indices used to do evaluation.
+        projection_method (str, optional): Projection method. Defaults to "PCA".
+        n_components (int, optional): The dimension you want to reduce to. -1 means no
+            projection will be implemented. Defaults to 2.
+        projection_only (bool, optional): When set to true, will immediately return after
+            training the projection_model. res and classify_model will be None. Defaults
+            to False.
+        load_classifier_dir_and_name (tuple[str, str], optional): Optional tuple
+            (root_dir, name) containing the root directory and name of the classifier. If
+            provided, will load the classifier's saved params from "root_dir/params"
+            corresponding to "name". Otherwise, will train the classifier from scratch.
+            Defaults to None.
+        classification_method (str, optional): Classification method. Can be LR, TPC, and
+            BSS. Defaults to "BSS".
+        print_more (bool, optional): Whether to print more information. Defaults to False.
+        learn_dict (dict, optional): Dictionary for learning. Defaults to {}.
+        save_probs (bool, optional): Whether to save probabilities. Defaults to True.
+        test_on_train (bool, optional): If true, will use the train set to test the model.
+            Defaults to False.
+        constraints (None, optional): Constraints to do the projection (CCS only).
+            Defaults to None.
+        project_along_mean_diff (bool, optional): If true, will project the data along the
+            mean difference of the two classes. Defaults to False.
+        run_dir (str, optional): Root directory for the Sacred Run. Defaults to None.
+        seed (int, optional): Seed for random number generation. Defaults to None.
+        run_id (int, optional): Sacred Run ID. Defaults to None.
+    """
     start = time.time()
     if print_more:
-        print("Projection method: {} (n_con = {}) in {}\nClassification method: {} in: {}".format(
-            projection_method, n_components, projection_dict,
-            classification_method, test_dict))
+        print(
+            "Projection method: {} (n_con = {}) in {}\nClassification method: {} in: {}".format(
+                projection_method,
+                n_components,
+                projection_dict,
+                classification_method,
+                test_dict,
+            )
+        )
 
     no_train = False
     if classification_method == "Random":
@@ -671,10 +890,21 @@ def mainResults(
     if classification_method != "CCS" and constraints is not None:
         raise ValueError("constraints only supported for CCS")
 
-    # use all data (not split) to do the PCA
-    proj_states = getConcat([getConcat([data_dict[key][w][0]
-                            for w in lis]) for key, lis in projection_dict.items()])
-    projection_model = myReduction(method = projection_method, n_components=n_components, print_more = print_more)
+    # Concatenate all the data (not split) to do PCA.
+    # Shape: [num_total_samples, num_features]. If there is a constant number of
+    # prompts per dataset, num_total_samples = num_datasets * num_prompts
+    # * num_samples_per_prompt.
+    proj_states = getConcat(
+        [
+            getConcat([data_dict[key][w][0] for w in lis])
+            for key, lis in projection_dict.items()
+        ]
+    )
+    projection_model = myReduction(
+        method=projection_method,
+        n_components=n_components,
+        print_more=print_more,
+    )
     projection_model.fit(proj_states)
 
     if projection_only:
@@ -692,84 +922,153 @@ def mainResults(
             if print_more:
                 print("Classifier not found, will train from scratch")
 
-
     if classification_method == "CCS":
-        init_kwargs = dict(verbose=print_more,
-                           no_train=no_train,
-                           constraints=constraints)
+        init_kwargs = dict(
+            verbose=print_more, no_train=no_train, constraints=constraints
+        )
         if load_classifier_dir_and_name is not None and coef is not None:
-            classify_model = ConsistencyMethod.from_coef_and_bias(coef, bias, **init_kwargs)
+            classify_model = ConsistencyMethod.from_coef_and_bias(
+                coef, bias, **init_kwargs
+            )
         else:
             classify_model = ConsistencyMethod(**init_kwargs)
-            datas, label = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
+            datas, label = getPair(
+                target_dict=projection_dict,
+                data_dict=data_dict,
+                permutation_dict=permutation_dict,
+                projection_model=projection_model,
+                split="train",
+            )
             assert len(datas.shape) == 2
             if project_along_mean_diff:
                 datas = project_data_along_axis(datas, label)
-            data = [datas[:,:datas.shape[1]//2], datas[:,datas.shape[1]//2:]]
+            data = [
+                datas[:, : datas.shape[1] // 2],
+                datas[:, datas.shape[1] // 2 :],
+            ]
 
-            classify_model.fit(data = data, label=label, **learn_dict)
+            classify_model.fit(data=data, label=label, **learn_dict)
 
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
 
-        lis = [getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = {key: [idx]}) for key, l in projection_dict.items() for idx in l]
+        lis = [
+            getPair(
+                target_dict={key: [idx]},
+                data_dict=data_dict,
+                permutation_dict=permutation_dict,
+                projection_model=projection_model,
+            )
+            for key, l in projection_dict.items()
+            for idx in l
+        ]
 
-        weights = [1/len(l) for l in projection_dict.values() for _ in l]
+        weights = [1 / len(l) for l in projection_dict.values() for _ in l]
 
-        classify_model = myClassifyModel(method = classification_method, print_more = print_more)
-        classify_model.fit([w[0] for w in lis], [w[1] for w in lis], weights = weights, **learn_dict)
+        classify_model = myClassifyModel(
+            method=classification_method, print_more=print_more
+        )
+        classify_model.fit(
+            [w[0] for w in lis],
+            [w[1] for w in lis],
+            weights=weights,
+            **learn_dict,
+        )
 
     else:
         if load_classifier_dir_and_name is not None and coef is not None:
             classify_model = myClassifyModel.from_coef_and_bias(
-                classification_method, coef, bias=bias, print_more=print_more)
+                classification_method, coef, bias=bias, print_more=print_more
+            )
         else:
-            classify_model = myClassifyModel(classification_method, print_more = print_more)
-            data, labels = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = projection_dict)
+            classify_model = myClassifyModel(
+                classification_method, print_more=print_more
+            )
+            data, labels = getPair(
+                data_dict=data_dict,
+                permutation_dict=permutation_dict,
+                projection_model=projection_model,
+                target_dict=projection_dict,
+            )
 
             if project_along_mean_diff:
                 data = project_data_along_axis(data, labels)
 
             classify_model.fit(data, labels)
 
+    # Evaluate the model on the test sets.
     res, lss, ece_dict = {}, {}, {}
-    for key, lis in test_dict.items():
-        res[key], lss[key], ece_dict[key] = [], [], []
-        for prompt_idx in lis:
-            dic = {key: [prompt_idx]}
+    for dataset, prompt_indices in test_dict.items():
+        # Create eval dir if needed.
+        if save_probs:
+            eval_dir = load_utils.get_eval_dir(run_dir, dataset, seed, run_id)
+            if not os.path.exists(eval_dir):
+                os.makedirs(eval_dir)
+
+        res[dataset], lss[dataset], ece_dict[dataset] = [], [], []
+        for prompt_idx in prompt_indices:
+            # Get the data and labels for the current dataset and prompt.
+            dataset_dict = {dataset: [prompt_idx]}
             # if train_on_test and method != "BSS":
             #     classify_model = myClassifyModel(method = method, print_more = print_more)
-            #     classify_model.fit(*getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dic))
-            data, label = getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dic, split = ("train" if test_on_train else "test"))
+            #     classify_model.fit(*getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dataset_dict))
+            data, label = getPair(
+                target_dict=dataset_dict,
+                data_dict=data_dict,
+                permutation_dict=permutation_dict,
+                projection_model=projection_model,
+                split=("train" if test_on_train else "test"),
+            )
 
             if project_along_mean_diff:
                 data = project_data_along_axis(data, label)
 
             method = classification_method if not no_train else "Random"
+
+            # Split the hidden states into those for class "0" and class "1".
             if classification_method == "CCS":
-                data = [data[:,:data.shape[1]//2], data[:,data.shape[1]//2:]]
+                if data.shape[1] % 2 != 0:
+                    raise ValueError(
+                        "CCS requires the same number of hidden states for "
+                        "class '0' and class '1' to be concatenated, got "
+                        f"{data.shape[1]} total features, which is odd."
+                    )
+                data = [
+                    data[:, : data.shape[1] // 2],
+                    data[:, data.shape[1] // 2 :],
+                ]
 
             # TODO: save probs directly to the given path instead of to a CSV
             # in the directory.
-            if save_eval:
-                eval_dir = load_utils.get_eval_dir(run_dir, key, seed, run_id)
-                if not os.path.exists(eval_dir):
-                    os.makedirs(eval_dir, exist_ok=True)
-                save_file = load_utils.get_probs_save_path(run_dir, key, seed, run_id, method, project_along_mean_diff, prompt_idx)
+            if save_probs:
+                if run_dir is None or seed is None or run_id is None:
+                    raise ValueError(
+                        "run_dir, seed, and run_id must be provided to save eval results"
+                    )
+                save_probs_file = load_utils.get_probs_save_path(
+                    eval_dir, method, project_along_mean_diff, prompt_idx
+                )
+            else:
+                save_probs_file = None
 
-            acc, losses = classify_model.score(data, label, getloss = True, save_file=save_file)
+            acc, losses = classify_model.score(
+                data, label, getloss=True, save_file=save_probs_file
+            )
             predicted_probs = classify_model.predict_probs(data).flatten()
             ece = metrics.expected_calibration_error(predicted_probs, label)[0]
-            ece_flip = metrics.expected_calibration_error(1 - predicted_probs, label)[0]
-            res[key].append(acc)
-            lss[key].append(losses)
-            ece_dict[key].append((ece, ece_flip))
+            ece_flip = metrics.expected_calibration_error(
+                1 - predicted_probs, label
+            )[0]
+            res[dataset].append(acc)
+            lss[dataset].append(losses)
+            ece_dict[dataset].append((ece, ece_flip))
 
     duration = time.time() - start
     if print_more:
         print("mainResults finished, duration: {}s".format(duration))
     return res, lss, ece_dict, projection_model, classify_model
+
 
 # print("\
 # ------ Func: printAcc ------\n\
@@ -779,17 +1078,26 @@ def mainResults(
 # ## Output ##\n\
 #     Directly print the accuracy and return the global level accuracy.\n\
 # ")
-def printAcc(input_dic, verbose = 1):
+def printAcc(input_dic, verbose=1):
     if type(input_dic) != dict:
         print(input_dic)
         return np.mean(input_dic)
     if verbose >= 2:
         for key in input_dic.keys():
-            print("Test on {}, avg acc is {:.2f}, best is {:.2f}, std is {:.2f}".format(
-                key, 100 * np.mean(input_dic[key]), 100 * np.max(input_dic[key]), 100 * np.std(input_dic[key])
-            ))
+            print(
+                "Test on {}, avg acc is {:.2f}, best is {:.2f}, std is {:.2f}".format(
+                    key,
+                    100 * np.mean(input_dic[key]),
+                    100 * np.max(input_dic[key]),
+                    100 * np.std(input_dic[key]),
+                )
+            )
     global_acc = np.mean([100 * np.mean(w) for w in input_dic.values()])
     global_std = np.mean([100 * np.std(w) for w in input_dic.values()])
     if verbose >= 1:
-        print("## Global accuracy: {:.2f}, std.: {:.2f}".format(global_acc, global_std))
+        print(
+            "## Global accuracy: {:.2f}, std.: {:.2f}".format(
+                global_acc, global_std
+            )
+        )
     return global_acc

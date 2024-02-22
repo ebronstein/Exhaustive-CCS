@@ -26,12 +26,15 @@ def maybeAppendProjectSuffix(method, project_along_mean_diff):
 
 
 def saveParams(
-    save_dir, name, coef: np.ndarray, intercept: Optional[np.ndarray]
+    save_dir, coef: np.ndarray, intercept: Optional[np.ndarray]
 ):
-    path = os.path.join(save_dir, "params")
-    np.save(os.path.join(path, "coef_{}.npy".format(name)), coef)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    coef_path = os.path.join(save_dir, "coef.npy")
+    np.save(coef_path, coef)
     if intercept is not None:
-        np.save(os.path.join(path, "intercept_{}.npy".format(name)), intercept)
+        intercept_path = os.path.join(save_dir, "intercept.npy")
+        np.save(intercept_path, intercept)
 
 
 def saveFrame(frame_dict, args):

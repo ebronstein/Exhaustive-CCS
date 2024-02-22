@@ -6,7 +6,12 @@ import numpy as np
 import pandas as pd
 
 from utils.file_utils import get_model_short_name
+from utils.types import DataDictType, PermutationDictType
 from utils_generation.save_utils import maybeAppendProjectSuffix
+
+
+def get_combined_datasets_str(datasets: Union[str, list[str]]) -> str:
+    return datasets if isinstance(datasets, str) else "+".join(datasets)
 
 
 def get_exp_dir(
@@ -17,10 +22,7 @@ def get_exp_dir(
     seed: int,
 ):
     model_short_name = get_model_short_name(model)
-    if isinstance(train_sets, str):
-        train_sets_str = train_sets
-    else:
-        train_sets_str = "+".join(train_sets)
+    train_sets_str = get_combined_datasets_str(train_sets)
     return os.path.join(
         save_dir, name, model_short_name, train_sets_str, f"seed_{seed}"
     )
@@ -131,16 +133,28 @@ def getDirList(
     return [os.path.join(load_dir, d) for d in gen_dirs]
 
 
-def organizeStates(lis, mode):
-    """
-    Whether to do minus, to concat or do nothing
+def organizeStates(hidden_states: tuple[np.ndarray], mode: str) -> np.ndarray:
+    """Organize the hidden states according to `mode`.
+
+    Args:
+        hidden_states (tuple): A tuple of hidden states corresponding to class
+            "0" and class "1". Note that the classes may be arbitrary when using
+            an unsupervised method.
+        mode (str): The mode to organize the hidden states.
+            Valid values are "0", "1", "minus", and "concat".
+
+    Returns:
+        numpy.ndarray: The organized hidden states.
+
+    Raises:
+        NotImplementedError: If the mode is not supported.
     """
     if mode in ["0", "1"]:
-        return lis[int(mode)]
+        return hidden_states[int(mode)]
     elif mode == "minus":
-        return lis[0] - lis[1]
+        return hidden_states[0] - hidden_states[1]
     elif mode == "concat":
-        return np.concatenate(lis, axis=-1)
+        return np.concatenate(hidden_states, axis=-1)
     else:
         raise NotImplementedError("This mode is not supported.")
 
@@ -159,7 +173,7 @@ def loadHiddenStates(
     mdl,
     set_name,
     load_dir,
-    promtpt_idx,
+    prompt_idx,
     location="encoder",
     layer=-1,
     data_num=1000,
@@ -168,7 +182,7 @@ def loadHiddenStates(
     scale=True,
     demean=True,
     mode="minus",
-    verbose=True,
+    logger=None,
 ):
     """Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
 
@@ -180,23 +194,23 @@ def loadHiddenStates(
         ValueError: If no hidden states are found.
     """
     dir_list = getDirList(
-        mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx
+        mdl, set_name, load_dir, data_num, confusion, place, prompt_idx
     )
     if not dir_list:
         raise ValueError(
-            "No hidden states found for {} {} {} {} {} {} {}".format(
-                mdl, set_name, load_dir, data_num, confusion, place, promtpt_idx
-            )
+            f"No hidden states found in directory {load_dir} for model={mdl} "
+            f"dataset={set_name} data_num={data_num} prefix={confusion} "
+            f"location={place} prompt_idx={prompt_idx}"
         )
 
     append_list = ["_" + location + str(layer) for _ in dir_list]
 
     hidden_states = [
         organizeStates(
-            [
+            (
                 np.load(os.path.join(w, "0{}.npy".format(app))),
                 np.load(os.path.join(w, "1{}.npy".format(app))),
-            ],
+            ),
             mode=mode,
         )
         for w, app in zip(dir_list, append_list)
@@ -204,12 +218,11 @@ def loadHiddenStates(
 
     # normalize
     hidden_states = [normalize(w, scale, demean) for w in hidden_states]
-    if verbose:
+    if logger is not None:
         hs_shape = hidden_states[0].shape if hidden_states else "None"
-        print(
-            "{} prompts for {}, with shape {}".format(
-                len(hidden_states), set_name, hs_shape
-            )
+        logger.info(
+            "%s prompts for %s, with shape %s"
+            % (len(hidden_states), set_name, hs_shape)
         )
     labels = [
         np.array(pd.read_csv(os.path.join(w, "frame.csv"))["label"].to_list())
@@ -219,13 +232,13 @@ def loadHiddenStates(
     return [(u, v) for u, v in zip(hidden_states, labels)]
 
 
-def getPermutation(data_list, rate=0.6):
+def getPermutation(data_list, rate=0.6) -> tuple[np.ndarray, np.ndarray]:
     length = len(data_list[0][1])
     permutation = np.random.permutation(range(length)).reshape(-1)
-    return [
+    return (
         permutation[: int(length * rate)],
         permutation[int(length * rate) :],
-    ]
+    )
 
 
 def getDic(
@@ -240,9 +253,8 @@ def getDic(
     scale=True,
     demean=True,
     mode="minus",
-    verbose=True,
     logger=None,
-):
+) -> tuple[DataDictType, PermutationDictType]:
     """Loads hidden states and labels.
 
     Args:
@@ -259,8 +271,16 @@ def getDic(
         verbose: Whether to print more
 
     Returns: Tuple (data_dict, permutation_dict):
-        data_dict: a dict with key equals to set name, and value is a list. Each element in the list is a tuple (state, label) corresponding to a prompt. State has shape (#data * #dim), and label has shape (#data). For example, data_dict["imdb"][0][0] contains the hidden states for the first prompt for the imdb dataset.
-        permutation_dict: [train_idx, test_idx], where train_idx is the subset of [#data] that corresponds to the training set, and test_idx is the subset that corresponds to the test set.
+        data_dict: a dict with key equals to set name, and value is a list.
+        Each element in the list is a tuple (state, label) corresponding to a
+        prompt. State has shape [num_data, hidden_dim], and label has shape
+        [num_data]. For example, `data_dict["imdb"][0][0]` and
+        `data_dict["imdb"][0][1]` contain the hidden states and labels for the
+        first prompt for the imdb dataset, respectively.
+        permutation_dict: Dictionary of train/test split indices. Key is the
+        dataset name, value is a tuple pair (train_idx, test_idx), where
+        train_idx is the subset of [#data] that corresponds to the training set,
+        and test_idx is the subset that corresponds to the test set.
     """
     if location not in ["encoder", "decoder"]:
         raise ValueError(
@@ -269,7 +289,7 @@ def getDic(
     elif location == "decoder" and layer < 0:
         raise ValueError(f"Decoder layer must be non-negative, got {layer}.")
 
-    if verbose and logger is not None:
+    if logger is not None:
         logger.info(
             "start loading {} hidden states {} for {} with {} prefix. Prompt_dict: {}, Scale: {}, Demean: {}, Mode: {}".format(
                 location,
@@ -300,7 +320,7 @@ def getDic(
             scale=scale,
             demean=demean,
             mode=mode,
-            verbose=verbose,
+            logger=logger,
         )
         for set_name in dataset_list
     }

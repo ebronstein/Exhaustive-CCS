@@ -4,6 +4,7 @@ import json
 import os
 import random
 import time
+import typing
 import warnings
 from typing import Any, Iterable, Literal, Union
 
@@ -15,7 +16,7 @@ from sacred.observers import FileStorageObserver
 
 from utils.file_utils import get_model_short_name
 from utils_extraction import load_utils
-from utils_extraction.func_utils import eval_adder, getAvg, train_adder
+from utils_extraction.func_utils import getAvg
 from utils_extraction.load_utils import (
     get_params_dir,
     get_probs_save_path,
@@ -58,6 +59,8 @@ PrefixType = Literal[
     "normal-thatsright",
 ]
 
+MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS"]
+
 ex = Experiment()
 
 
@@ -73,7 +76,7 @@ def sacred_config():
     datasets: Union[str, list[str]] = "imdb"
     prefix: PrefixType = "normal"
     data_num: int = 1000
-    method_list: Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS"] = "CCS"
+    method_list: Union[MethodType, list[MethodType]] = "CCS"
     mode: Literal["auto", "minus", "concat"] = "auto"
     save_dir = "extraction_results"
     load_dir = "generation_results"
@@ -85,11 +88,9 @@ def sacred_config():
     # File name where zero-shot results will be saved.
     zero: str = "zero_shot"
     seed: int = 0
-    prompt_save_level: Literal["single", "all"] = "all"
     save_states: bool = True
     save_params = True
-    # TODO: change this to save_results
-    no_save_results: bool = False
+    save_results: bool = True
     test_on_train: bool = False
     project_along_mean_diff: bool = False
     verbose: bool = False
@@ -126,12 +127,16 @@ def _format_config(config: dict) -> dict:
         if isinstance(config[key], str):
             config[key] = [config[key]]
 
+    if config["prefix"] not in typing.get_args(PrefixType):
+        raise ValueError(f"Invalid prefix: {config['prefix']}")
+
     config["location"] = parser_utils.get_states_location_str(
         config["location"], config["model"], use_auth_token=HF_AUTH_TOKEN
     )
     # TODO: validate location more extensively.
     if config["location"] == "decoder" and config["layer"] < 0:
         config["layer"] += config["num_layers"]
+
     if config["test"] == "testone":
         raise ValueError(
             "Current extraction program does not support applying method on prompt-specific level. Set --test=testall."
@@ -147,7 +152,8 @@ def main(
     _config = _format_config(_config)
     dataset_list = _config["datasets"]
 
-    run_dir = os.path.join(exp_dir, _run._id)
+    run_id = _run._id
+    run_dir = os.path.join(exp_dir, run_id)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     if _config["save_params"]:
@@ -160,94 +166,69 @@ def main(
         )
     )
 
-    # Start calculate numbers
-    # std is over all prompts within this dataset
-    train_results_path = load_utils.get_train_results_path(run_dir)
-    eval_results_path = load_utils.get_eval_results_path(run_dir)
-
-    train_csv = pd.DataFrame(
-        columns=[
-            "model",
-            "prefix",
-            "method",
-            "prompt_level",
-            "train",
-            "test",
-        ]
-    )
-    eval_csv = pd.DataFrame(
-        columns=[
-            "model",
-            "prefix",
-            "method",
-            "prompt_level",
-            "train",
-            "test",
-            "accuracy",
-            "std",
-        ]
-    )
-
     # TODO: look into how zero-shot results are being saved.
     if "0-shot" in _config["method_list"]:
         raise NotImplementedError(
             "Zero-shot extraction is not yet implemented."
         )
-        # load zero-shot performance
-        rawzeros = pd.read_csv(
-            os.path.join(_config["load_dir"], "{}.csv".format(_config["zero"]))
-        )
-        # Get the global zero acc dict (setname, [acc])
-        zeros_acc = get_zeros_acc(
-            _config["load_dir"],
-            csv_name=_config["zero"],
-            mdl_name=model,
-            dataset_list=dataset_list,
-            prefix=prefix,
-        )
-        for setname in dataset_list:
-            if _config["prompt_save_level"] == "all":
-                eval_csv = eval_adder(
-                    eval_csv,
-                    model,
-                    prefix,
-                    "0-shot",
-                    "",
-                    "",
-                    setname,
-                    np.mean(zeros_acc[setname]),
-                    np.std(zeros_acc[setname]),
-                    "",
-                    "",
-                    "",
-                    "",
-                )
-            else:  # For each prompt, save one line
-                for idx in range(len(zeros_acc[setname])):
-                    eval_csv = eval_adder(
-                        eval_csv,
-                        model,
-                        prefix,
-                        "0-shot",
-                        prompt_level=idx,
-                        train="",
-                        test=setname,
-                        accuracy=zeros_acc[setname][idx],
-                        std="",
-                        ece="",
-                        location="",
-                        layer="",
-                        loss="",
-                        sim_loss="",
-                        cons_loss="",
-                    )
+        # # load zero-shot performance
+        # rawzeros = pd.read_csv(
+        #     os.path.join(_config["load_dir"], "{}.csv".format(_config["zero"]))
+        # )
+        # # Get the global zero acc dict (setname, [acc])
+        # zeros_acc = get_zeros_acc(
+        #     _config["load_dir"],
+        #     csv_name=_config["zero"],
+        #     mdl_name=model,
+        #     dataset_list=dataset_list,
+        #     prefix=prefix,
+        # )
+        # for setname in dataset_list:
+        #     if _config["prompt_save_level"] == "all":
+        #         eval_csv = eval_adder(
+        #             eval_csv,
+        #             model,
+        #             prefix,
+        #             "0-shot",
+        #             "",
+        #             "",
+        #             setname,
+        #             np.mean(zeros_acc[setname]),
+        #             np.std(zeros_acc[setname]),
+        #             "",
+        #             "",
+        #             "",
+        #             "",
+        #         )
+        #     else:  # For each prompt, save one line
+        #         for idx in range(len(zeros_acc[setname])):
+        #             eval_csv = eval_adder(
+        #                 eval_csv,
+        #                 model,
+        #                 prefix,
+        #                 "0-shot",
+        #                 prompt_level=idx,
+        #                 train="",
+        #                 test=setname,
+        #                 accuracy=zeros_acc[setname][idx],
+        #                 std="",
+        #                 ece="",
+        #                 location="",
+        #                 layer="",
+        #                 loss="",
+        #                 sim_loss="",
+        #                 cons_loss="",
+        #             )
 
-        if not _config["no_save_results"]:
-            eval_csv.to_csv(eval_results_path, index=False)
-            if _config["verbose"]:
-                _log.info(
-                    "Saved zero-shot performance to %s", eval_results_path
-                )
+        # if _config["save_results"]:
+        #     eval_csv.to_csv(eval_results_path, index=False)
+        #     if _config["verbose"]:
+        #         _log.info(
+        #             "Saved zero-shot performance to %s", eval_results_path
+        #         )
+
+    train_results = []
+    eval_results = collections.defaultdict(list)
 
     for method in _config["method_list"]:
         if method == "0-shot":
@@ -278,16 +259,17 @@ def main(
             location=_config["location"],
             layer=_config["layer"],
             mode=mode,
+            logger=_log,
         )
         assert data_dict.keys() == set(dataset_list)
         assert permutation_dict.keys() == set(dataset_list)
 
         test_dict = {ds: range(len(data_dict[ds])) for ds in dataset_list}
 
-        train_set = "all"
+        train_sets_str = load_utils.get_combined_datasets_str(dataset_list)
         train_list = dataset_list
         projection_dict = {
-            key: range(len(data_dict[key])) for key in train_list
+            key: list(range(len(data_dict[key]))) for key in train_list
         }
 
         n_components = 1 if method == "TPC" else -1
@@ -330,6 +312,9 @@ def main(
             test_on_train=_config["test_on_train"],
             constraints=constraints,
             project_along_mean_diff=project_along_mean_diff,
+            run_dir=run_dir,
+            seed=seed,
+            run_id=run_id,
         )
 
         # save params except for KMeans
@@ -348,7 +333,6 @@ def main(
                 assert False
             if _config["save_params"]:
                 saveParams(
-                    _config["save_dir"],
                     params_dir,
                     coef,
                     bias,
@@ -381,7 +365,7 @@ def main(
             "method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
                 maybeAppendProjectSuffix(method, project_along_mean_diff),
                 "all",
-                train_set,
+                train_sets_str,
                 100 * acc,
                 100 * std,
                 loss,
@@ -392,80 +376,64 @@ def main(
             )
         )
 
-        for key in dataset_list:
-            if _config["prompt_save_level"] == "all":
+        # Organize train and eval results.
+        for test_set in dataset_list:
+            # TODO: handle the case where consecutive prompts may not be used,
+            # so `res` should store the actual prompt indices rather than just
+            # a list of the accuracy (same for the other results from
+            # `mainResults`).
+            for prompt_idx in range(len(res[test_set])):
                 loss, sim_loss, cons_loss = (
-                    np.mean(lss[key], axis=0)
+                    lss[test_set][prompt_idx]
                     if methodHasLoss(method)
                     else ("", "", "")
                 )
-                train_csv = train_adder(
-                    train_csv,
-                    model,
-                    prefix,
-                    maybeAppendProjectSuffix(method, project_along_mean_diff),
-                    "all",
-                    train_set,
-                    key,
-                    location=_config["location"],
-                    layer=_config["layer"],
-                    loss=loss,
-                    sim_loss=sim_loss,
-                    cons_loss=cons_loss,
-                )
-                eval_csv = eval_adder(
-                    eval_csv,
-                    model,
-                    prefix,
-                    maybeAppendProjectSuffix(method, project_along_mean_diff),
-                    "all",
-                    train_set,
-                    key,
-                    accuracy=np.mean(res[key]),
-                    std=np.std(res[key]),
-                    ece=np.mean(ece_dict[key]),
-                    ece_flip=np.mean(ece_flip_dict[key]),
-                    location=_config["location"],
-                    layer=_config["layer"],
-                )
-            else:
-                for idx in range(len(res[key])):
-                    loss, sim_loss, cons_loss = (
-                        lss[key][idx] if methodHasLoss(method) else ("", "", "")
-                    )
-                    train_csv = train_adder(
-                        train_csv,
-                        model,
-                        prefix,
-                        maybeAppendProjectSuffix(
+                train_results.append(
+                    {
+                        "model": model,
+                        "prefix": prefix,
+                        "method": maybeAppendProjectSuffix(
                             method, project_along_mean_diff
                         ),
-                        idx,
-                        train_set,
-                        key,
-                        layer=_config["layer"],
-                        loss=loss,
-                        sim_loss=sim_loss,
-                        cons_loss=cons_loss,
-                    )
-                    eval_csv = eval_adder(
-                        eval_csv,
-                        model,
-                        prefix,
-                        maybeAppendProjectSuffix(
+                        "prompt_level": prompt_idx,
+                        "train": train_sets_str,
+                        "test": test_set,
+                        "location": _config["location"],
+                        "layer": _config["layer"],
+                        "loss": loss,
+                        "sim_loss": sim_loss,
+                        "cons_loss": cons_loss,
+                    }
+                )
+                eval_results[test_set].append(
+                    {
+                        "model": model,
+                        "prefix": prefix,
+                        "method": maybeAppendProjectSuffix(
                             method, project_along_mean_diff
                         ),
-                        idx,
-                        train_set,
-                        key,
-                        accuracy=res[key][idx],
-                        std="",
-                        ece=ece_dict[key][idx],
-                        ece_flip=ece_flip_dict[key][idx],
-                        location=_config["location"],
-                        layer=_config["layer"],
-                    )
+                        "prompt_level": prompt_idx,
+                        "train": train_sets_str,
+                        "test": test_set,
+                        "location": _config["location"],
+                        "layer": _config["layer"],
+                        "accuracy": res[test_set][prompt_idx],
+                        "ece": ece_dict[test_set][prompt_idx],
+                        "ece_flip": ece_flip_dict[test_set][prompt_idx],
+                    }
+                )
 
-    if not _config["no_save_results"]:
-        train_csv.to_csv(train_results_path, index=False)
-        eval_csv.to_csv(eval_results_path, index=False)
+    if _config["save_results"]:
+        train_results_path = load_utils.get_train_results_path(run_dir)
+        train_results_df = pd.DataFrame(train_results)
+        train_results_df.to_csv(train_results_path, index=False)
+
+        for ds, ds_eval_results in eval_results.items():
+            eval_dir = load_utils.get_eval_dir(run_dir, ds, seed, run_id)
+            if not os.path.exists(eval_dir):
+                os.makedirs(eval_dir)
+            eval_results_path = load_utils.get_eval_results_path(
+                run_dir, ds, seed, run_id
+            )
+            ds_eval_results_df = pd.DataFrame(ds_eval_results)
+            ds_eval_results_df.to_csv(eval_results_path, index=False)
