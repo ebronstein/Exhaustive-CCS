@@ -16,7 +16,7 @@ from transformers import (
 from datasets import load_dataset
 from utils_generation.construct_prompts import MyPrompts, constructPrompt
 from utils_generation.hf_utils import prevent_name_conflicts
-from utils_generation.save_utils import getDir, saveFrame
+from utils_generation.save_utils import get_hidden_states_dir
 
 
 def loadModel(mdl_name, cache_dir, parallelize):
@@ -192,7 +192,7 @@ def loadDatasets(args, tokenizer):
         # Otherwise, load existing raw dataset or reload / load new raw sets
         # notice that this is just the `raw data`, which is a dict or whatever
         dataset_name_w_num = "{}_{}_prompt{}".format(set_name, max_num, prompt_idx)
-        complete_path = getDir(dataset_name_w_num, args)
+        complete_path = get_hidden_states_dir(dataset_name_w_num, args)
 
         if reload == False and os.path.exists(os.path.join(complete_path, "frame.csv")):
             frame = pd.read_csv(os.path.join(complete_path, "frame.csv"), converters={"selection": eval})

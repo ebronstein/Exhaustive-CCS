@@ -6,7 +6,7 @@ import random
 import time
 import typing
 import warnings
-from typing import Any, Iterable, Literal, Union
+from typing import Any, Iterable, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -16,20 +16,17 @@ from sacred.observers import FileStorageObserver
 
 from utils.file_utils import get_model_short_name
 from utils_extraction import load_utils
-from utils_extraction.func_utils import getAvg
 from utils_extraction.load_utils import (
     get_params_dir,
-    get_probs_save_path,
-    get_results_save_path,
-    get_zeros_acc,
-    getDic,
+    load_hidden_states_for_datasets,
+    make_permutation_dict,
     maybe_append_project_suffix,
+    save_params,
 )
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
-from utils_generation.save_utils import saveParams
 
 ALL_DATASETS = [
     "imdb",
@@ -69,6 +66,10 @@ def methodHasLoss(method):
     return method in ["BSS", "CCS"] or method.startswith("RCCS")
 
 
+def getAvg(dic):
+    return np.mean([np.mean(lis) for lis in dic.values()])
+
+
 @ex.config
 def sacred_config():
     # Experiment name
@@ -82,7 +83,10 @@ def sacred_config():
     save_dir = "extraction_results"
     load_dir = "generation_results"
     load_classifier: bool = False
-    params_load_dir: str = "extraction_results"
+    # Directory where the saved method parameters will be loaded from.
+    # The parameters are expected to be saved in `params_load_dir/bias.npy` and
+    # `params_load_dir/intercept.npy`.
+    params_load_dir: Optional[str] = None
     location: Literal["auto", "encoder", "decoder"] = "auto"
     layer: int = -1
     num_layers = hf_utils.get_num_hidden_layers(model)
@@ -157,8 +161,6 @@ def main(
     run_dir = os.path.join(exp_dir, run_id)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    if _config["save_params"]:
-        load_utils.make_params_dir(run_dir)
 
     prefix = _config["prefix"]
     _log.info(
@@ -252,7 +254,7 @@ def main(
             else ("concat" if method_use_concat else "minus")
         )
         # load the data_dict and permutation_dict
-        data_dict, permutation_dict = getDic(
+        data_dict = load_hidden_states_for_datasets(
             _config["load_dir"],
             mdl_name=model,
             dataset_list=dataset_list,
@@ -262,6 +264,9 @@ def main(
             mode=mode,
             logger=_log,
         )
+        permutation_dict = {
+            ds: make_permutation_dict(data_dict[ds]) for ds in dataset_list
+        }
         assert data_dict.keys() == set(dataset_list)
         assert permutation_dict.keys() == set(dataset_list)
 
@@ -291,10 +296,8 @@ def main(
                 constraints = np.load(os.path.join(params_dir, "coef.npy"))
                 old_biases = np.load(os.path.join(params_dir, "intercept.npy"))
 
-        load_classifier_dir_and_name = (
-            (_config["params_load_dir"], params_dir)
-            if _config["load_classifier"]
-            else None
+        load_classifier_dir = (
+            _config["params_load_dir"] if _config["load_classifier"] else None
         )
 
         # return a dict with the same shape as test_dict
@@ -306,7 +309,8 @@ def main(
             test_dict=test_dict,
             projection_method="PCA",
             n_components=n_components,
-            load_classifier_dir_and_name=load_classifier_dir_and_name,
+            load_classifier_dir=load_classifier_dir,
+            prefix=prefix,
             classification_method=method_,
             print_more=_config["verbose"],
             save_probs=_config["save_states"],
@@ -333,7 +337,7 @@ def main(
             else:
                 assert False
             if _config["save_params"]:
-                saveParams(
+                save_params(
                     params_dir,
                     coef,
                     bias,
@@ -347,7 +351,7 @@ def main(
                 coef = np.concatenate([constraints, coef], axis=0)
                 bias = np.concatenate([old_biases, bias], axis=0)
             if _config["save_params"]:
-                saveParams(_config["save_dir"], params_dir, coef, bias)
+                save_params(params_dir, coef, bias)
 
         acc, std, loss, sim_loss, cons_loss = (
             getAvg(res),

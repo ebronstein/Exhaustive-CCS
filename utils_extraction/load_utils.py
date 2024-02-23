@@ -8,6 +8,9 @@ import pandas as pd
 from utils.file_utils import get_model_short_name
 from utils.types import DataDictType, PermutationDictType
 
+COEF_FILENAME = "coef.npy"
+INTERCEPT_FILENAME = "intercept.npy"
+
 
 def get_combined_datasets_str(datasets: Union[str, list[str]]) -> str:
     return datasets if isinstance(datasets, str) else "+".join(datasets)
@@ -31,9 +34,35 @@ def get_eval_dir(run_dir: str, dataset: str, seed: int, run_id: int) -> str:
     return os.path.join(run_dir, "eval", dataset, f"seed_{seed}", run_id)
 
 
-def make_params_dir(run_dir: str) -> None:
-    params_dir = os.path.join(run_dir, "params")
-    os.makedirs(params_dir)
+def get_params_dir(run_dir: str, method: str, prefix: str) -> str:
+    return os.path.join(run_dir, "params", f"{method}_{prefix}")
+
+
+def load_params(
+    run_dir: str, method: str, prefix: str
+) -> tuple[np.ndarray, Optional[np.ndarray]]:
+    path = get_params_dir(run_dir, method, prefix)
+    coef_path = os.path.join(path, COEF_FILENAME)
+    intercept_path = os.path.join(path, INTERCEPT_FILENAME)
+    if not os.path.exists(coef_path):
+        raise FileNotFoundError(
+            f"No params found in {run_dir} for method={method}, prefix={prefix}"
+        )
+    coef = np.load(coef_path)
+    intercept = (
+        np.load(intercept_path) if os.path.exists(intercept_path) else None
+    )
+    return coef, intercept
+
+
+def save_params(save_dir, coef: np.ndarray, intercept: Optional[np.ndarray]):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    coef_path = os.path.join(save_dir, COEF_FILENAME)
+    np.save(coef_path, coef)
+    if intercept is not None:
+        intercept_path = os.path.join(save_dir, INTERCEPT_FILENAME)
+        np.save(intercept_path, intercept)
 
 
 def get_train_results_path(run_dir: str) -> str:
@@ -62,18 +91,6 @@ def get_probs_save_path(
     return os.path.join(eval_dir, filename)
 
 
-def get_params_dir(run_dir, method, prefix):
-    return os.path.join(run_dir, "params", f"{method}_{prefix}")
-
-
-# TODO: delete this eventually.
-def get_results_save_path(root_dir, model, prefix, seed):
-    model_short_name = get_model_short_name(model)
-    return os.path.join(
-        root_dir, "{}_{}_{}.csv".format(model_short_name, prefix, seed)
-    )
-
-
 def parse_generation_dir(
     generation_dir: str,
 ) -> Optional[tuple[str, str, str, str, str, str]]:
@@ -97,7 +114,7 @@ def parse_generation_dir(
     )
 
 
-def getDirList(
+def get_hidden_states_dirs(
     mdl,
     set_name,
     load_dir,
@@ -105,7 +122,7 @@ def getDirList(
     confusion,
     place,
     prompt_idxs: Optional[list[int]] = None,
-):
+) -> list[str]:
     target_short_model_name = get_model_short_name(mdl)
     gen_dirs = []
     subdirs = [
@@ -138,7 +155,9 @@ def getDirList(
     return [os.path.join(load_dir, d) for d in gen_dirs]
 
 
-def organizeStates(hidden_states: tuple[np.ndarray], mode: str) -> np.ndarray:
+def organize_hidden_states(
+    hidden_states: tuple[np.ndarray], mode: str
+) -> np.ndarray:
     """Organize the hidden states according to `mode`.
 
     Args:
@@ -174,7 +193,7 @@ def normalize(data, scale=True, demean=True):
     return data / avgnorm * np.sqrt(data.shape[1])
 
 
-def loadHiddenStates(
+def load_hidden_states(
     mdl,
     set_name,
     load_dir,
@@ -198,7 +217,7 @@ def loadHiddenStates(
     Raises:
         ValueError: If no hidden states are found.
     """
-    dir_list = getDirList(
+    dir_list = get_hidden_states_dirs(
         mdl, set_name, load_dir, data_num, confusion, place, prompt_idx
     )
     if not dir_list:
@@ -211,7 +230,7 @@ def loadHiddenStates(
     append_list = ["_" + location + str(layer) for _ in dir_list]
 
     hidden_states = [
-        organizeStates(
+        organize_hidden_states(
             (
                 np.load(os.path.join(w, "0{}.npy".format(app))),
                 np.load(os.path.join(w, "1{}.npy".format(app))),
@@ -237,7 +256,7 @@ def loadHiddenStates(
     return [(u, v) for u, v in zip(hidden_states, labels)]
 
 
-def getPermutation(data_list, rate=0.6) -> tuple[np.ndarray, np.ndarray]:
+def make_permutation_dict(data_list, rate=0.6) -> tuple[np.ndarray, np.ndarray]:
     length = len(data_list[0][1])
     permutation = np.random.permutation(range(length)).reshape(-1)
     return (
@@ -246,7 +265,7 @@ def getPermutation(data_list, rate=0.6) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def getDic(
+def load_hidden_states_for_datasets(
     load_dir,
     mdl_name,
     dataset_list,
@@ -260,7 +279,7 @@ def getDic(
     mode="minus",
     logger=None,
 ) -> tuple[DataDictType, PermutationDictType]:
-    """Loads hidden states and labels.
+    """Load hidden states and labels for the given datasets.
 
     Args:
         mdl_name: name of the model
@@ -275,17 +294,12 @@ def getDic(
         mode: how to generate hidden states from h and h'
         verbose: Whether to print more
 
-    Returns: Tuple (data_dict, permutation_dict):
-        data_dict: a dict with key equals to set name, and value is a list.
+    Returns: A dict with key equals to set name, and value is a list.
         Each element in the list is a tuple (state, label) corresponding to a
         prompt. State has shape [num_data, hidden_dim], and label has shape
         [num_data]. For example, `data_dict["imdb"][0][0]` and
         `data_dict["imdb"][0][1]` contain the hidden states and labels for the
         first prompt for the imdb dataset, respectively.
-        permutation_dict: Dictionary of train/test split indices. Key is the
-        dataset name, value is a tuple pair (train_idx, test_idx), where
-        train_idx is the subset of [#data] that corresponds to the training set,
-        and test_idx is the subset that corresponds to the test set.
     """
     if location not in ["encoder", "decoder"]:
         raise ValueError(
@@ -313,7 +327,7 @@ def getDic(
         else {key: None for key in dataset_list}
     )
     data_dict = {
-        set_name: loadHiddenStates(
+        set_name: load_hidden_states(
             mdl_name,
             set_name,
             load_dir,
@@ -329,24 +343,10 @@ def getDic(
         )
         for set_name in dataset_list
     }
-    permutation_dict = {
-        set_name: getPermutation(data_dict[set_name])
-        for set_name in dataset_list
-    }
-    return data_dict, permutation_dict
+
+    return data_dict
 
 
-# print("------ Func: get_zeros_acc ------\n\
-# ## Input = csv_name, mdl_name, dataset_list, prefix, prompt_dict = None, avg = False\n\
-#     csv_name: The name of csv we get accuracy from.\n\
-#     mdl_name: The name of the model.\n\
-#     dataset_list: List of dataset you want the accuracy from.\n\
-#     prefix: The name of prefix.\n\
-#     prompt_dict: Same as in getDir(). You can specify which prompt to get using this variable. Default is None, i.e. get all prompts.\n\
-#     avg: Whether to average upon return. If True, will return a numbers, otherwise a dict with key from dataset_list and values being a list of accuracy.\n\
-# ## Output = number / dict, depending on `avg`\n\
-# "
-# )
 def get_zeros_acc(
     load_dir,
     csv_name,
@@ -356,6 +356,22 @@ def get_zeros_acc(
     prompt_dict=None,
     avg=False,
 ):
+    """
+    Get the zero-shot accuracies for a given model and prefix.
+
+    Args:
+        load_dir (str): The directory where the CSV file is located.
+        csv_name (str): The name of the CSV file (without the extension).
+        mdl_name (str): The name of the model.
+        dataset_list (list): A list of dataset names.
+        prefix (str): The prefix.
+        prompt_dict (dict, optional): A dictionary mapping dataset names to prompt indices. Defaults to None, which uses all of the prompts.
+        avg (bool, optional): Whether to return the average accuracy. Defaults to False.
+
+    Returns:
+        dict or float: If avg is False, returns a dictionary where each key is a dataset name and the value is a list of accuracies.
+        If avg is True, returns the average accuracy across all datasets.
+    """
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
     subzeros = zeros.loc[
@@ -380,16 +396,3 @@ def get_zeros_acc(
     else:
         # get the dataset avg, and finally the global level avg
         return np.mean([np.mean(values) for values in acc_dict.values()])
-
-
-def load_params(save_dir, name) -> tuple[np.ndarray, Optional[np.ndarray]]:
-    path = os.path.join(save_dir, "params")
-    coef_path = os.path.join(path, "coef_{}.npy".format(name))
-    intercept_path = os.path.join(path, "intercept_{}.npy".format(name))
-    if not os.path.exists(coef_path):
-        raise FileNotFoundError("No params found for {}".format(name))
-    coef = np.load(coef_path)
-    intercept = (
-        np.load(intercept_path) if os.path.exists(intercept_path) else None
-    )
-    return coef, intercept

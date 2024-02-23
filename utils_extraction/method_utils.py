@@ -817,7 +817,8 @@ def mainResults(
     projection_method="PCA",
     n_components: int = 2,
     projection_only=False,
-    load_classifier_dir_and_name: Optional[tuple[str, str]] = None,
+    load_classifier_dir: Optional[str] = None,
+    prefix=None,
     classification_method="BSS",
     print_more=False,
     learn_dict={},
@@ -851,7 +852,7 @@ def mainResults(
         projection_only (bool, optional): When set to true, will immediately return after
             training the projection_model. res and classify_model will be None. Defaults
             to False.
-        load_classifier_dir_and_name (tuple[str, str], optional): Optional tuple
+        load_classifier_dir (str, optional): Optional tuple
             (root_dir, name) containing the root directory and name of the classifier. If
             provided, will load the classifier's saved params from "root_dir/params"
             corresponding to "name". Otherwise, will train the classifier from scratch.
@@ -913,11 +914,17 @@ def mainResults(
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
     coef, bias = None, None
-    if load_classifier_dir_and_name is not None:
+    if load_classifier_dir is not None:
+        if prefix is None:
+            raise ValueError(
+                "prefix must be provided when load_classifier_dir is given."
+            )
         try:
-            coef, bias = load_utils.load_params(*load_classifier_dir_and_name)
+            coef, bias = load_utils.load_params(
+                load_classifier_dir, classification_method, prefix
+            )
             if print_more:
-                print("Loaded classifier from", load_classifier_dir_and_name)
+                print("Loaded classifier from", load_classifier_dir)
         except FileNotFoundError:
             if print_more:
                 print("Classifier not found, will train from scratch")
@@ -926,7 +933,7 @@ def mainResults(
         init_kwargs = dict(
             verbose=print_more, no_train=no_train, constraints=constraints
         )
-        if load_classifier_dir_and_name is not None and coef is not None:
+        if load_classifier_dir is not None and coef is not None:
             classify_model = ConsistencyMethod.from_coef_and_bias(
                 coef, bias, **init_kwargs
             )
@@ -977,7 +984,7 @@ def mainResults(
         )
 
     else:
-        if load_classifier_dir_and_name is not None and coef is not None:
+        if load_classifier_dir is not None and coef is not None:
             classify_model = myClassifyModel.from_coef_and_bias(
                 classification_method, coef, bias=bias, print_more=print_more
             )

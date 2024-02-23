@@ -16,18 +16,15 @@ from utils_extraction.load_utils import (
     get_params_dir,
     get_probs_save_path,
     get_zeros_acc,
-    getDic,
+    load_hidden_states_for_datasets,
     maybe_append_project_suffix,
+    save_params,
 )
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
-from utils_generation.save_utils import (
-    get_model_short_name,
-    get_results_save_path,
-    saveParams,
-)
+from utils_generation.save_utils import get_model_short_name, get_results_save_path
 
 ######## JSON Load ########
 json_dir = "./registration"
@@ -178,7 +175,7 @@ if __name__ == "__main__":
 
             mode = args.mode if args.mode != "auto" else ("concat" if method_use_concat else "minus")
             # load the data_dict and permutation_dict
-            data_dict, permutation_dict = getDic(
+            data_dict, permutation_dict = load_hidden_states_for_datasets(
                 args.load_dir,
                 mdl_name= model,
                 dataset_list=dataset_list,
@@ -257,7 +254,7 @@ if __name__ == "__main__":
                     else:
                         assert False
                     if args.save_params:
-                        saveParams(
+                        save_params(
                             args.save_dir,
                             params_file_name,
                             coef,
@@ -272,7 +269,7 @@ if __name__ == "__main__":
                         coef = np.concatenate([constraints, coef], axis=0)
                         bias = np.concatenate([old_biases, bias], axis=0)
                     if args.save_params:
-                        saveParams(args.save_dir, params_file_name, coef, bias)
+                        save_params(args.save_dir, params_file_name, coef, bias)
 
                 acc, std, loss, sim_loss, cons_loss = getAvg(res), np.mean([np.std(lis) for lis in res.values()]), *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0)
                 ece_dict = {key: [ece[0] for ece in ece_vals] for key, ece_vals in ece.items()}
