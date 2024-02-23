@@ -11,18 +11,21 @@ import time
 import numpy as np
 import pandas as pd
 
-from utils_extraction.func_utils import adder, getAvg
-from utils_extraction.load_utils import get_zeros_acc, getDic
+from utils_extraction.func_utils import eval_adder, getAvg
+from utils_extraction.load_utils import (
+    get_params_dir,
+    get_probs_save_path,
+    get_zeros_acc,
+    getDic,
+    maybe_append_project_suffix,
+)
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 from utils_generation.save_utils import (
     get_model_short_name,
-    get_probs_save_dir_path,
     get_results_save_path,
-    make_params_filename,
-    maybeAppendProjectSuffix,
     saveParams,
 )
 
@@ -145,12 +148,12 @@ if __name__ == "__main__":
             )
             for setname in dataset_list:
                 if args.prompt_save_level == "all":
-                    csv = adder(csv, model, global_prefix, "0-shot", "", "", setname,
+                    csv = eval_adder(csv, model, global_prefix, "0-shot", "", "", setname,
                             np.mean(zeros_acc[setname]),
                             np.std(zeros_acc[setname]),"","","","")
                 else:   # For each prompt, save one line
                     for idx in range(len(zeros_acc[setname])):
-                        csv = adder(csv, model, global_prefix, "0-shot",
+                        csv = eval_adder(csv, model, global_prefix, "0-shot",
                                     prompt_level= idx, train= "", test = setname,
                                     accuracy = zeros_acc[setname][idx],
                                     std = "", ece="", location = "", layer = "", loss = "",
@@ -195,16 +198,16 @@ if __name__ == "__main__":
                 n_components = 1 if method == "TPC" else -1
 
                 save_file_prefix = (
-                    get_probs_save_dir_path(args.save_dir, args.model, method, project_along_mean_diff, args.seed, train_set)
+                    get_probs_save_path(args.save_dir, args.model, method, project_along_mean_diff, args.seed, train_set)
                     if args.save_states
                     else None
                 )
 
                 method_str = "CCS" if method.startswith("RCCS") else method
-                params_file_name = make_params_filename(
+                params_file_name = get_params_dir(
                     model,
                     global_prefix,
-                    maybeAppendProjectSuffix(method_str, project_along_mean_diff),
+                    maybe_append_project_suffix(method_str, project_along_mean_diff),
                     train_set,
                     args.seed,
                 )
@@ -277,13 +280,13 @@ if __name__ == "__main__":
                 mean_ece = getAvg(ece_dict)
                 mean_ece_flip = getAvg(ece_flip_dict)
                 print("method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
-                    maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss, mean_ece, mean_ece_flip)
+                    maybe_append_project_suffix(method, project_along_mean_diff), "all", train_set, 100 * acc, 100 * std, loss, sim_loss, cons_loss, mean_ece, mean_ece_flip)
                 )
 
                 for key in dataset_list:
                     if args.prompt_save_level == "all":
                         loss, sim_loss, cons_loss = np.mean(lss[key], axis=0) if methodHasLoss(method) else ("", "", "")
-                        csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), "all", train_set, key,
+                        csv = eval_adder(csv, model, global_prefix, maybe_append_project_suffix(method, project_along_mean_diff), "all", train_set, key,
                                     accuracy = np.mean(res[key]),
                                     std = np.std(res[key]),
                                     ece=np.mean(ece_dict[key]),
@@ -295,7 +298,7 @@ if __name__ == "__main__":
                     else:
                         for idx in range(len(res[key])):
                             loss, sim_loss, cons_loss = lss[key][idx] if methodHasLoss(method) else ("", "", "")
-                            csv = adder(csv, model, global_prefix, maybeAppendProjectSuffix(method, project_along_mean_diff), idx, train_set, key,
+                            csv = eval_adder(csv, model, global_prefix, maybe_append_project_suffix(method, project_along_mean_diff), idx, train_set, key,
                                         accuracy = res[key][idx],
                                         std = "",
                                         ece=ece_dict[key][idx],
@@ -306,4 +309,4 @@ if __name__ == "__main__":
                                         )
 
         if not args.no_save_results:
-            saveCsv(csv, args.save_dir, args.model, global_prefix, args.seed, "After finish {}".format(maybeAppendProjectSuffix(method, False)))
+            saveCsv(csv, args.save_dir, args.model, global_prefix, args.seed, "After finish {}".format(maybe_append_project_suffix(method, False)))

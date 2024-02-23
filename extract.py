@@ -23,12 +23,13 @@ from utils_extraction.load_utils import (
     get_results_save_path,
     get_zeros_acc,
     getDic,
+    maybe_append_project_suffix,
 )
 from utils_extraction.method_utils import is_method_unsupervised, mainResults
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
-from utils_generation.save_utils import maybeAppendProjectSuffix, saveParams
+from utils_generation.save_utils import saveParams
 
 ALL_DATASETS = [
     "imdb",
@@ -277,7 +278,7 @@ def main(
         method_str = "CCS" if method.startswith("RCCS") else method
         params_dir = get_params_dir(
             run_dir,
-            maybeAppendProjectSuffix(method_str, project_along_mean_diff),
+            maybe_append_project_suffix(method_str, project_along_mean_diff),
             prefix,
         )
 
@@ -363,7 +364,7 @@ def main(
         mean_ece_flip = getAvg(ece_flip_dict)
         _log.info(
             "method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
-                maybeAppendProjectSuffix(method, project_along_mean_diff),
+                maybe_append_project_suffix(method, project_along_mean_diff),
                 "all",
                 train_sets_str,
                 100 * acc,
@@ -392,7 +393,7 @@ def main(
                     {
                         "model": model,
                         "prefix": prefix,
-                        "method": maybeAppendProjectSuffix(
+                        "method": maybe_append_project_suffix(
                             method, project_along_mean_diff
                         ),
                         "prompt_level": prompt_idx,
@@ -409,7 +410,7 @@ def main(
                     {
                         "model": model,
                         "prefix": prefix,
-                        "method": maybeAppendProjectSuffix(
+                        "method": maybe_append_project_suffix(
                             method, project_along_mean_diff
                         ),
                         "prompt_level": prompt_idx,

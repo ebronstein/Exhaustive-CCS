@@ -19,12 +19,6 @@ def getDir(dataset_name_w_num, args):
     return os.path.join(args.save_base_dir, d)
 
 
-def maybeAppendProjectSuffix(method, project_along_mean_diff):
-    if project_along_mean_diff:
-        return method + "-md"
-    return method
-
-
 def saveParams(
     save_dir, coef: np.ndarray, intercept: Optional[np.ndarray]
 ):

@@ -7,7 +7,6 @@ import pandas as pd
 
 from utils.file_utils import get_model_short_name
 from utils.types import DataDictType, PermutationDictType
-from utils_generation.save_utils import maybeAppendProjectSuffix
 
 
 def get_combined_datasets_str(datasets: Union[str, list[str]]) -> str:
@@ -48,11 +47,17 @@ def get_eval_results_path(
     return os.path.join(eval_dir, "eval.csv")
 
 
+def maybe_append_project_suffix(method, project_along_mean_diff):
+    if project_along_mean_diff:
+        return method + "-md"
+    return method
+
+
 def get_probs_save_path(
     eval_dir: str, method: str, project_along_mean_diff: bool, prompt_idx: int
 ):
     """Returns the path to the directory where the classifier probabilities are saved."""
-    method_str = maybeAppendProjectSuffix(method, project_along_mean_diff)
+    method_str = maybe_append_project_suffix(method, project_along_mean_diff)
     filename = f"probs_{method_str}_{prompt_idx}.csv"
     return os.path.join(eval_dir, filename)
 
