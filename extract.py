@@ -14,7 +14,6 @@ from sacred import Experiment
 from sacred.config.custom_containers import DogmaticDict, DogmaticList
 from sacred.observers import FileStorageObserver
 
-from utils.file_utils import get_model_short_name
 from utils_extraction import load_utils
 from utils_extraction.load_utils import (
     get_params_dir,
@@ -23,7 +22,7 @@ from utils_extraction.load_utils import (
     maybe_append_project_suffix,
     save_params,
 )
-from utils_extraction.method_utils import is_method_unsupervised, mainResults
+from utils_extraction.method_utils import eval, mainResults
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
@@ -66,6 +65,16 @@ def methodHasLoss(method):
     return method in ["BSS", "CCS"] or method.startswith("RCCS")
 
 
+def get_method_str(method: str) -> str:
+    return "CCS" if method.startswith("RCCS") else method
+
+
+def get_project_along_mean_diff(
+    method: str, project_along_mean_diff: bool
+) -> bool:
+    return "-md" in method or project_along_mean_diff
+
+
 def getAvg(dic):
     return np.mean([np.mean(lis) for lis in dic.values()])
 
@@ -82,11 +91,6 @@ def sacred_config():
     mode: Literal["auto", "minus", "concat"] = "auto"
     save_dir = "extraction_results"
     load_dir = "generation_results"
-    load_classifier: bool = False
-    # Directory where the saved method parameters will be loaded from.
-    # The parameters are expected to be saved in `params_load_dir/bias.npy` and
-    # `params_load_dir/intercept.npy`.
-    params_load_dir: Optional[str] = None
     location: Literal["auto", "encoder", "decoder"] = "auto"
     layer: int = -1
     num_layers = hf_utils.get_num_hidden_layers(model)
@@ -100,10 +104,20 @@ def sacred_config():
     project_along_mean_diff: bool = False
     verbose: bool = False
 
-    # TODO: delete these unused config parameters
-    test: Literal["testone", "testall"] = "testall"
-    append: bool = False
-    overwrite: bool = False
+    # Evaluation
+
+    # Dataset to evaluate the classification methods on.
+    eval_datasets: Union[str, list[str]] = "imdb"
+    # If true, load saved classifiers and only perform evaluation without
+    # training. Otherwise, train and evaluate the classifiers from scratch.
+    eval_only: bool = False
+
+    load_params_save_dir: str = save_dir
+    load_params_name: str = name
+    # Run ID to load the parameters from. If classifiers are not being
+    # loaded, this is None. If "latest", the latest run ID will be used.
+    # Otherwise, the specified run ID will be used.
+    load_params_run_id: Union[int, Literal["latest"]] = "latest"
 
     exp_dir = load_utils.get_exp_dir(save_dir, name, model, datasets, seed)
     ex.observers.append(FileStorageObserver(exp_dir, copy_sources=False))
@@ -125,15 +139,17 @@ def _convert_dogmatics_to_standard(obj: Any) -> Any:
 
 
 def _format_config(config: dict) -> dict:
+    if config["prefix"] not in typing.get_args(PrefixType):
+        raise ValueError(f"Invalid prefix: {config['prefix']}")
+    if any([method.startswith("RCCS") for method in config["method_list"]]):
+        raise NotImplementedError("RCCS is not yet implemented.")
+
     config = _convert_dogmatics_to_standard(config)
 
     # Convert single strings to lists.
-    for key in ["datasets", "method_list"]:
+    for key in ["datasets", "eval_datasets", "method_list"]:
         if isinstance(config[key], str):
             config[key] = [config[key]]
-
-    if config["prefix"] not in typing.get_args(PrefixType):
-        raise ValueError(f"Invalid prefix: {config['prefix']}")
 
     config["location"] = parser_utils.get_states_location_str(
         config["location"], config["model"], use_auth_token=HF_AUTH_TOKEN
@@ -142,27 +158,54 @@ def _format_config(config: dict) -> dict:
     if config["location"] == "decoder" and config["layer"] < 0:
         config["layer"] += config["num_layers"]
 
-    if config["test"] == "testone":
-        raise ValueError(
-            "Current extraction program does not support applying method on prompt-specific level. Set --test=testall."
-        )
-
     return config
 
 
 @ex.automain
-def main(
-    model, save_dir, exp_dir, _config: dict, seed: int, _seed: int, _log, _run
-):
+def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     _config = _format_config(_config)
-    dataset_list = _config["datasets"]
+    train_datasets = _config["datasets"]
+    eval_datasets = _config["eval_datasets"]
+    prefix = _config["prefix"]
 
     run_id = _run._id
     run_dir = os.path.join(exp_dir, run_id)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    prefix = _config["prefix"]
+    if _config["eval_only"]:
+        load_exp_dir = load_utils.get_exp_dir(
+            _config["load_params_save_dir"],
+            _config["load_params_name"],
+            model,
+            train_datasets,
+            seed,
+        )
+        load_params_run_id = _config["load_params_run_id"]
+        if load_params_run_id == "latest":
+            load_params_run_id = load_utils.maximum_existing_run_id(
+                load_exp_dir
+            )
+        load_run_dir = os.path.join(load_exp_dir, str(load_params_run_id))
+
+        # Check that the parameter directory exists for each method.
+        for method in _config["method_list"]:
+            method_str = get_method_str(method)
+            project_along_mean_diff = get_project_along_mean_diff(
+                method, _config["project_along_mean_diff"]
+            )
+            load_params_dir = get_params_dir(
+                load_run_dir,
+                maybe_append_project_suffix(
+                    method_str, project_along_mean_diff
+                ),
+                prefix,
+            )
+            if not os.path.exists(load_params_dir):
+                raise FileNotFoundError(
+                    f"Directory {load_params_dir} does not exist. Cannot load parameters."
+                )
+
     _log.info(
         "---------------- model = {}, prefix = {} ----------------".format(
             model, prefix
@@ -183,10 +226,10 @@ def main(
         #     _config["load_dir"],
         #     csv_name=_config["zero"],
         #     mdl_name=model,
-        #     dataset_list=dataset_list,
+        #     dataset_list=train_datasets,
         #     prefix=prefix,
         # )
-        # for setname in dataset_list:
+        # for setname in train_datasets:
         #     if _config["prompt_save_level"] == "all":
         #         eval_csv = eval_adder(
         #             eval_csv,
@@ -230,7 +273,6 @@ def main(
         #             "Saved zero-shot performance to %s", eval_results_path
         #         )
 
-    train_results = []
     eval_results = collections.defaultdict(list)
 
     for method in _config["method_list"]:
@@ -238,8 +280,8 @@ def main(
             continue
         _log.info("-------- method = %s --------", method)
 
-        project_along_mean_diff = (
-            "-md" in method or _config["project_along_mean_diff"]
+        project_along_mean_diff = get_project_along_mean_diff(
+            method, _config["project_along_mean_diff"]
         )
         if project_along_mean_diff:
             method = method.replace("-md", "")
@@ -253,11 +295,17 @@ def main(
             if _config["mode"] != "auto"
             else ("concat" if method_use_concat else "minus")
         )
-        # load the data_dict and permutation_dict
+
+        # If only evaluating, load just the eval datasets. Otherwise, load both
+        # the train and eval datasets.
+        if _config["eval_only"]:
+            datasets_to_load = eval_datasets
+        else:
+            datasets_to_load = list(set(train_datasets + eval_datasets))
         data_dict = load_hidden_states_for_datasets(
             _config["load_dir"],
             mdl_name=model,
-            dataset_list=dataset_list,
+            dataset_list=datasets_to_load,
             prefix=prefix,
             location=_config["location"],
             layer=_config["layer"],
@@ -265,65 +313,100 @@ def main(
             logger=_log,
         )
         permutation_dict = {
-            ds: make_permutation_dict(data_dict[ds]) for ds in dataset_list
+            ds: make_permutation_dict(data_dict[ds]) for ds in datasets_to_load
         }
-        assert data_dict.keys() == set(dataset_list)
-        assert permutation_dict.keys() == set(dataset_list)
+        assert data_dict.keys() == set(datasets_to_load)
+        assert permutation_dict.keys() == set(datasets_to_load)
 
-        test_dict = {ds: range(len(data_dict[ds])) for ds in dataset_list}
-
-        train_sets_str = load_utils.get_combined_datasets_str(dataset_list)
-        train_list = dataset_list
+        # TODO: maybe projection should get to use other datasets that are
+        # not in the train and eval list. projection_dict is currently being
+        # used to specify the training datasets, so these two uses should be
+        # separated.
+        projection_datasets = (
+            eval_datasets if _config["eval_only"] else train_datasets
+        )
         projection_dict = {
-            key: list(range(len(data_dict[key]))) for key in train_list
+            key: list(range(len(data_dict[key]))) for key in projection_datasets
         }
+
+        test_dict = {ds: range(len(data_dict[ds])) for ds in eval_datasets}
 
         n_components = 1 if method == "TPC" else -1
 
-        method_str = "CCS" if method.startswith("RCCS") else method
-        params_dir = get_params_dir(
-            run_dir,
-            maybe_append_project_suffix(method_str, project_along_mean_diff),
-            prefix,
-        )
-
+        method_str = get_method_str(method)
         method_ = method
         constraints = None
         if method.startswith("RCCS"):
             method_ = "CCS"
             if method != "RCCS0":
-                # TODO: replace this with call to parameter-loading function.
-                constraints = np.load(os.path.join(params_dir, "coef.npy"))
-                old_biases = np.load(os.path.join(params_dir, "intercept.npy"))
+                # TODO: load constraints and old_biases from the correct directory for
+                # RCCS.
+                prev_rccs_params_dir = None
+                # TODO: replace this with call to parameter-loading function
+                # and use a different directory where the previous CCS params
+                # are stored.
+                constraints = np.load(
+                    os.path.join(prev_rccs_params_dir, "coef.npy")
+                )
+                old_biases = np.load(
+                    os.path.join(prev_rccs_params_dir, "intercept.npy")
+                )
 
-        load_classifier_dir = (
-            _config["params_load_dir"] if _config["load_classifier"] else None
-        )
-
-        # return a dict with the same shape as test_dict
-        # for each key test_dict[key] is a unitary list
-        res, lss, ece, pmodel, cmodel = mainResults(
+        kwargs = dict(
             data_dict=data_dict,
             permutation_dict=permutation_dict,
-            projection_dict=projection_dict,
             test_dict=test_dict,
+            projection_dict=projection_dict,
             projection_method="PCA",
             n_components=n_components,
-            load_classifier_dir=load_classifier_dir,
             prefix=prefix,
             classification_method=method_,
             print_more=_config["verbose"],
             save_probs=_config["save_states"],
             test_on_train=_config["test_on_train"],
-            constraints=constraints,
             project_along_mean_diff=project_along_mean_diff,
-            run_dir=run_dir,
             seed=seed,
-            run_id=run_id,
         )
+        if _config["eval_only"]:
+            load_params_dir = get_params_dir(
+                load_run_dir,
+                maybe_append_project_suffix(
+                    method_str, project_along_mean_diff
+                ),
+                prefix,
+            )
+            eval_kwargs = dict(
+                run_dir=load_run_dir,
+                run_id=_config["load_params_run_id"],
+                **kwargs,
+            )
+            breakpoint()
+            res, lss, ece, pmodel, cmodel = eval(**eval_kwargs)
+        else:
+            main_results_kwargs = dict(
+                constraints=constraints,
+                run_dir=run_dir,
+                run_id=run_id,
+                **kwargs,
+            )
+            res, lss, ece, pmodel, cmodel = mainResults(**main_results_kwargs)
 
-        # save params except for KMeans
-        if method in ["TPC", "BSS", "CCS", "Random", "LR"]:
+        # Save parameters if needed.
+        if (
+            _config["save_params"]
+            and not _config["eval_only"]
+            and (
+                method in ["TPC", "BSS", "CCS", "Random", "LR"]
+                or method.startswith("RCCS")
+            )
+        ):
+            save_params_dir = get_params_dir(
+                run_dir,
+                maybe_append_project_suffix(
+                    method_str, project_along_mean_diff
+                ),
+                prefix,
+            )
             if method in ["TPC", "BSS"]:
                 coef, bias = (
                     cmodel.coef_ @ pmodel.getDirection(),
@@ -334,24 +417,21 @@ def main(
                 bias = cmodel.bias
             elif method == "LR":
                 coef, bias = cmodel.coef_, cmodel.intercept_
+            elif method.startswith("RCCS"):
+                coef_and_bias = cmodel.best_theta
+                coef = coef_and_bias[:, :-1]
+                bias = coef_and_bias[:, -1]
+                if method != "RCCS0":
+                    coef = np.concatenate([constraints, coef], axis=0)
+                    bias = np.concatenate([old_biases, bias], axis=0)
             else:
                 assert False
-            if _config["save_params"]:
-                save_params(
-                    params_dir,
-                    coef,
-                    bias,
-                )
 
-        if method.startswith("RCCS"):
-            coef_and_bias = cmodel.best_theta
-            coef = coef_and_bias[:, :-1]
-            bias = coef_and_bias[:, -1]
-            if method != "RCCS0":
-                coef = np.concatenate([constraints, coef], axis=0)
-                bias = np.concatenate([old_biases, bias], axis=0)
-            if _config["save_params"]:
-                save_params(params_dir, coef, bias)
+            save_params(
+                save_params_dir,
+                coef,
+                bias,
+            )
 
         acc, std, loss, sim_loss, cons_loss = (
             getAvg(res),
@@ -366,6 +446,8 @@ def main(
         }
         mean_ece = getAvg(ece_dict)
         mean_ece_flip = getAvg(ece_flip_dict)
+
+        train_sets_str = load_utils.get_combined_datasets_str(train_datasets)
         _log.info(
             "method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
                 maybe_append_project_suffix(method, project_along_mean_diff),
@@ -382,34 +464,12 @@ def main(
         )
 
         # Organize train and eval results.
-        for test_set in dataset_list:
+        for test_set in eval_datasets:
             # TODO: handle the case where consecutive prompts may not be used,
             # so `res` should store the actual prompt indices rather than just
             # a list of the accuracy (same for the other results from
             # `mainResults`).
             for prompt_idx in range(len(res[test_set])):
-                loss, sim_loss, cons_loss = (
-                    lss[test_set][prompt_idx]
-                    if methodHasLoss(method)
-                    else ("", "", "")
-                )
-                train_results.append(
-                    {
-                        "model": model,
-                        "prefix": prefix,
-                        "method": maybe_append_project_suffix(
-                            method, project_along_mean_diff
-                        ),
-                        "prompt_level": prompt_idx,
-                        "train": train_sets_str,
-                        "test": test_set,
-                        "location": _config["location"],
-                        "layer": _config["layer"],
-                        "loss": loss,
-                        "sim_loss": sim_loss,
-                        "cons_loss": cons_loss,
-                    }
-                )
                 eval_results[test_set].append(
                     {
                         "model": model,
@@ -425,14 +485,13 @@ def main(
                         "accuracy": res[test_set][prompt_idx],
                         "ece": ece_dict[test_set][prompt_idx],
                         "ece_flip": ece_flip_dict[test_set][prompt_idx],
+                        "loss": loss,
+                        "sim_loss": sim_loss,
+                        "cons_loss": cons_loss,
                     }
                 )
 
     if _config["save_results"]:
-        train_results_path = load_utils.get_train_results_path(run_dir)
-        train_results_df = pd.DataFrame(train_results)
-        train_results_df.to_csv(train_results_path, index=False)
-
         for ds, ds_eval_results in eval_results.items():
             eval_dir = load_utils.get_eval_dir(run_dir, ds, seed, run_id)
             if not os.path.exists(eval_dir):

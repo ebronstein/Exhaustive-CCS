@@ -1,5 +1,6 @@
 import os
 import time
+import typing
 from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
@@ -17,9 +18,20 @@ from utils_extraction import load_utils, metrics
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR",)
 
+EvalClassificationMethodType = Literal["LR", "BSS", "CCS"]
+
 
 def is_method_unsupervised(method):
     return method in UNSUPERVISED_METHODS or method.startswith("RCCS")
+
+
+class IdentityReduction:
+
+    def fit(self, data):
+        pass
+
+    def transform(self, data):
+        return data
 
 
 class myReduction:
@@ -812,12 +824,11 @@ def project_data_along_axis(data, labels):
 def mainResults(
     data_dict: DataDictType,
     permutation_dict: PermutationDictType,
-    projection_dict: PromptIndicesDictType,
     test_dict: PromptIndicesDictType,
+    projection_dict: PromptIndicesDictType,
     projection_method="PCA",
     n_components: int = 2,
     projection_only=False,
-    load_classifier_dir: Optional[str] = None,
     prefix=None,
     classification_method="BSS",
     print_more=False,
@@ -852,11 +863,6 @@ def mainResults(
         projection_only (bool, optional): When set to true, will immediately return after
             training the projection_model. res and classify_model will be None. Defaults
             to False.
-        load_classifier_dir (str, optional): Optional tuple
-            (root_dir, name) containing the root directory and name of the classifier. If
-            provided, will load the classifier's saved params from "root_dir/params"
-            corresponding to "name". Otherwise, will train the classifier from scratch.
-            Defaults to None.
         classification_method (str, optional): Classification method. Can be LR, TPC, and
             BSS. Defaults to "BSS".
         print_more (bool, optional): Whether to print more information. Defaults to False.
@@ -913,49 +919,26 @@ def mainResults(
 
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
-    coef, bias = None, None
-    if load_classifier_dir is not None:
-        if prefix is None:
-            raise ValueError(
-                "prefix must be provided when load_classifier_dir is given."
-            )
-        try:
-            coef, bias = load_utils.load_params(
-                load_classifier_dir, classification_method, prefix
-            )
-            if print_more:
-                print("Loaded classifier from", load_classifier_dir)
-        except FileNotFoundError:
-            if print_more:
-                print("Classifier not found, will train from scratch")
-
     if classification_method == "CCS":
-        init_kwargs = dict(
-            verbose=print_more, no_train=no_train, constraints=constraints
+        classify_model = ConsistencyMethod(
+            no_train=no_train, verbose=print_more, constraints=constraints
         )
-        if load_classifier_dir is not None and coef is not None:
-            classify_model = ConsistencyMethod.from_coef_and_bias(
-                coef, bias, **init_kwargs
-            )
-        else:
-            classify_model = ConsistencyMethod(**init_kwargs)
-            datas, label = getPair(
-                target_dict=projection_dict,
-                data_dict=data_dict,
-                permutation_dict=permutation_dict,
-                projection_model=projection_model,
-                split="train",
-            )
-            assert len(datas.shape) == 2
-            if project_along_mean_diff:
-                datas = project_data_along_axis(datas, label)
-            data = [
-                datas[:, : datas.shape[1] // 2],
-                datas[:, datas.shape[1] // 2 :],
-            ]
+        datas, label = getPair(
+            target_dict=projection_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+        )
+        assert len(datas.shape) == 2
+        if project_along_mean_diff:
+            datas = project_data_along_axis(datas, label)
+        data = [
+            datas[:, : datas.shape[1] // 2],
+            datas[:, datas.shape[1] // 2 :],
+        ]
 
-            classify_model.fit(data=data, label=label, **learn_dict)
-
+        classify_model.fit(data=data, label=label, **learn_dict)
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -984,25 +967,111 @@ def mainResults(
         )
 
     else:
-        if load_classifier_dir is not None and coef is not None:
+        classify_model = myClassifyModel(
+            classification_method, print_more=print_more
+        )
+        data, labels = getPair(
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            target_dict=projection_dict,
+        )
+
+        if project_along_mean_diff:
+            data = project_data_along_axis(data, labels)
+
+        classify_model.fit(data, labels)
+
+    return eval(
+        data_dict,
+        permutation_dict,
+        test_dict,
+        projection_dict,
+        projection_method=projection_method,
+        n_components=n_components,
+        classify_model=classify_model,
+        projection_model=projection_model,
+        prefix=prefix,
+        classification_method=classification_method,
+        print_more=print_more,
+        save_probs=save_probs,
+        test_on_train=test_on_train,
+        project_along_mean_diff=project_along_mean_diff,
+        run_dir=run_dir,
+        seed=seed,
+        run_id=run_id,
+    )
+
+
+def eval(
+    data_dict: DataDictType,
+    permutation_dict: PermutationDictType,
+    test_dict: PromptIndicesDictType,
+    projection_dict: Optional[PromptIndicesDictType] = None,
+    projection_method="PCA",
+    n_components: int = -1,
+    classify_model=None,
+    projection_model=None,
+    prefix=None,
+    classification_method: EvalClassificationMethodType = "CCS",
+    print_more=False,
+    save_probs=True,
+    test_on_train=False,
+    project_along_mean_diff=False,
+    run_dir: Optional[str] = None,
+    seed: Optional[str] = None,
+    run_id: Optional[str] = None,
+):
+    if classification_method not in typing.get_args(
+        EvalClassificationMethodType
+    ):
+        raise ValueError(
+            f"Unsupported classification method for eval: {classification_method}"
+        )
+    if save_probs and (run_dir is None or seed is None or run_id is None):
+        raise ValueError(
+            "run_dir, seed, and run_id must be provided to save eval results"
+        )
+
+    # Train projection model if needed.
+    if projection_model is None:
+        if n_components != -1:
+            if projection_dict is None:
+                raise ValueError(
+                    "projection_dict must be provided when n_components is not -1."
+                )
+            # Concatenate all the data (not split) to do PCA.
+            # Shape: [num_total_samples, num_features]. If there is a constant number of
+            # prompts per dataset, num_total_samples = num_datasets * num_prompts
+            # * num_samples_per_prompt.
+            proj_states = getConcat(
+                [
+                    getConcat([data_dict[key][w][0] for w in lis])
+                    for key, lis in projection_dict.items()
+                ]
+            )
+            projection_model = myReduction(
+                method=projection_method,
+                n_components=n_components,
+                print_more=print_more,
+            )
+            projection_model.fit(proj_states)
+        else:
+            projection_model = IdentityReduction()
+
+    # Load classification model params.
+    if classify_model is None:
+        coef, bias = load_utils.load_params(
+            run_dir, classification_method, prefix
+        )
+        if classification_method in ["CCS", "Random"]:
+            classify_model = ConsistencyMethod.from_coef_and_bias(
+                coef, bias, verbose=print_more
+            )
+        else:
             classify_model = myClassifyModel.from_coef_and_bias(
                 classification_method, coef, bias=bias, print_more=print_more
             )
-        else:
-            classify_model = myClassifyModel(
-                classification_method, print_more=print_more
-            )
-            data, labels = getPair(
-                data_dict=data_dict,
-                permutation_dict=permutation_dict,
-                projection_model=projection_model,
-                target_dict=projection_dict,
-            )
-
-            if project_along_mean_diff:
-                data = project_data_along_axis(data, labels)
-
-            classify_model.fit(data, labels)
 
     # Evaluate the model on the test sets.
     res, lss, ece_dict = {}, {}, {}
@@ -1017,9 +1086,6 @@ def mainResults(
         for prompt_idx in prompt_indices:
             # Get the data and labels for the current dataset and prompt.
             dataset_dict = {dataset: [prompt_idx]}
-            # if train_on_test and method != "BSS":
-            #     classify_model = myClassifyModel(method = method, print_more = print_more)
-            #     classify_model.fit(*getPair(data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model, target_dict = dataset_dict))
             data, label = getPair(
                 target_dict=dataset_dict,
                 data_dict=data_dict,
@@ -1030,8 +1096,6 @@ def mainResults(
 
             if project_along_mean_diff:
                 data = project_data_along_axis(data, label)
-
-            method = classification_method if not no_train else "Random"
 
             # Split the hidden states into those for class "0" and class "1".
             if classification_method == "CCS":
@@ -1049,12 +1113,11 @@ def mainResults(
             # TODO: save probs directly to the given path instead of to a CSV
             # in the directory.
             if save_probs:
-                if run_dir is None or seed is None or run_id is None:
-                    raise ValueError(
-                        "run_dir, seed, and run_id must be provided to save eval results"
-                    )
                 save_probs_file = load_utils.get_probs_save_path(
-                    eval_dir, method, project_along_mean_diff, prompt_idx
+                    eval_dir,
+                    classification_method,
+                    project_along_mean_diff,
+                    prompt_idx,
                 )
             else:
                 save_probs_file = None
@@ -1071,9 +1134,6 @@ def mainResults(
             lss[dataset].append(losses)
             ece_dict[dataset].append((ece, ece_flip))
 
-    duration = time.time() - start
-    if print_more:
-        print("mainResults finished, duration: {}s".format(duration))
     return res, lss, ece_dict, projection_model, classify_model
 
 

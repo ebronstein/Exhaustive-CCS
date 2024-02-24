@@ -1,3 +1,5 @@
+from transformers import AutoConfig
+
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 
 FULL_MODEL_NAME_TO_SHORT_NAME = {

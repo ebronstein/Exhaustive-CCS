@@ -30,8 +30,10 @@ def get_exp_dir(
     )
 
 
-def get_eval_dir(run_dir: str, dataset: str, seed: int, run_id: int) -> str:
-    return os.path.join(run_dir, "eval", dataset, f"seed_{seed}", run_id)
+def get_eval_dir(
+    run_dir: str, dataset: str, seed: int, run_id: Union[int, str]
+) -> str:
+    return os.path.join(run_dir, "eval", dataset, f"seed_{seed}", str(run_id))
 
 
 def get_params_dir(run_dir: str, method: str, prefix: str) -> str:
@@ -396,3 +398,16 @@ def get_zeros_acc(
     else:
         # get the dataset avg, and finally the global level avg
         return np.mean([np.mean(values) for values in acc_dict.values()])
+
+
+def maximum_existing_run_id(basedir: str) -> int:
+    """Return the maximum existing run ID in the given directory."""
+    dir_nrs = [
+        int(d)
+        for d in os.listdir(basedir)
+        if os.path.isdir(os.path.join(basedir, d)) and d.isdigit()
+    ]
+    if dir_nrs:
+        return max(dir_nrs)
+    else:
+        return 0
