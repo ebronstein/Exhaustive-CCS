@@ -30,10 +30,8 @@ def get_exp_dir(
     )
 
 
-def get_eval_dir(
-    run_dir: str, dataset: str, seed: int, run_id: Union[int, str]
-) -> str:
-    return os.path.join(run_dir, "eval", dataset, f"seed_{seed}", str(run_id))
+def get_eval_dir(run_dir: str, dataset: str) -> str:
+    return os.path.join(run_dir, "eval", dataset)
 
 
 def get_params_dir(run_dir: str, method: str, prefix: str) -> str:
@@ -71,10 +69,8 @@ def get_train_results_path(run_dir: str) -> str:
     return os.path.join(run_dir, "train.csv")
 
 
-def get_eval_results_path(
-    run_dir: str, dataset: str, seed: int, run_id: int
-) -> str:
-    eval_dir = get_eval_dir(run_dir, dataset, seed, run_id)
+def get_eval_results_path(run_dir: str, dataset: str) -> str:
+    eval_dir = get_eval_dir(run_dir, dataset)
     return os.path.join(eval_dir, "eval.csv")
 
 
@@ -400,12 +396,25 @@ def get_zeros_acc(
         return np.mean([np.mean(values) for values in acc_dict.values()])
 
 
-def maximum_existing_run_id(basedir: str) -> int:
+def run_dir_has_params(run_dir: str) -> bool:
+    params_dir = os.path.join(run_dir, "params")
+    return os.path.exists(params_dir) and os.listdir(params_dir)
+
+
+def maximum_existing_run_id(basedir: str, with_params: bool = True) -> int:
     """Return the maximum existing run ID in the given directory."""
     dir_nrs = [
         int(d)
         for d in os.listdir(basedir)
-        if os.path.isdir(os.path.join(basedir, d)) and d.isdigit()
+        # Run IDs are directories with a number as the name.
+        if os.path.isdir(os.path.join(basedir, d))
+        and d.isdigit()
+        and (
+            # If `with_params` is True, only consider directories with params.
+            run_dir_has_params(os.path.join(basedir, d))
+            if with_params
+            else True
+        )
     ]
     if dir_nrs:
         return max(dir_nrs)

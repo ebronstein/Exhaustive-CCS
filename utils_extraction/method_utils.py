@@ -1078,7 +1078,7 @@ def eval(
     for dataset, prompt_indices in test_dict.items():
         # Create eval dir if needed.
         if save_probs:
-            eval_dir = load_utils.get_eval_dir(run_dir, dataset, seed, run_id)
+            eval_dir = load_utils.get_eval_dir(run_dir, dataset)
             if not os.path.exists(eval_dir):
                 os.makedirs(eval_dir)
 

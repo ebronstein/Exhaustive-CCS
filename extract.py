@@ -14,6 +14,7 @@ from sacred import Experiment
 from sacred.config.custom_containers import DogmaticDict, DogmaticList
 from sacred.observers import FileStorageObserver
 
+from utils import file_utils
 from utils_extraction import load_utils
 from utils_extraction.load_utils import (
     get_params_dir,
@@ -206,10 +207,10 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                     f"Directory {load_params_dir} does not exist. Cannot load parameters."
                 )
 
+    model_short_name = file_utils.get_model_short_name(model)
     _log.info(
-        "---------------- model = {}, prefix = {} ----------------".format(
-            model, prefix
-        )
+        "---------------- model = %s, prefix = %s ----------------"
+        % (model_short_name, prefix)
     )
 
     # TODO: look into how zero-shot results are being saved.
@@ -380,7 +381,6 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_id=_config["load_params_run_id"],
                 **kwargs,
             )
-            breakpoint()
             res, lss, ece, pmodel, cmodel = eval(**eval_kwargs)
         else:
             main_results_kwargs = dict(
@@ -472,7 +472,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             for prompt_idx in range(len(res[test_set])):
                 eval_results[test_set].append(
                     {
-                        "model": model,
+                        "model": model_short_name,
                         "prefix": prefix,
                         "method": maybe_append_project_suffix(
                             method, project_along_mean_diff
@@ -493,11 +493,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
     if _config["save_results"]:
         for ds, ds_eval_results in eval_results.items():
-            eval_dir = load_utils.get_eval_dir(run_dir, ds, seed, run_id)
+            eval_dir = load_utils.get_eval_dir(run_dir, ds)
             if not os.path.exists(eval_dir):
                 os.makedirs(eval_dir)
-            eval_results_path = load_utils.get_eval_results_path(
-                run_dir, ds, seed, run_id
-            )
+            eval_results_path = load_utils.get_eval_results_path(run_dir, ds)
             ds_eval_results_df = pd.DataFrame(ds_eval_results)
             ds_eval_results_df.to_csv(eval_results_path, index=False)
