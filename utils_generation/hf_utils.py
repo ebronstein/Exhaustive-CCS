@@ -13,10 +13,17 @@ import transformers
 from transformers import (
     AutoConfig,
     AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
+    AutoModelForSequenceClassification,
+    AutoModelWithLMHead,
     AutoTokenizer,
+    GPT2LMHeadModel,
+    GPT2Tokenizer,
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
+    T5ForConditionalGeneration,
 )
 
 # Ordered by preference
@@ -40,18 +47,64 @@ def prevent_name_conflicts():
             os.chdir(old_cwd)
 
 
+def get_model_class(model_name: str) -> str:
+    if "gpt-neo-2.7B" in model_name or "gpt-j-6B" in model_name:
+        model = AutoModelForCausalLM
+    elif "gpt2" in model_name:
+        model = GPT2LMHeadModel
+    elif "T0" in model_name:
+        model = AutoModelForSeq2SeqLM
+    elif "unifiedqa" in model_name:
+        model = T5ForConditionalGeneration
+    elif "deberta" in model_name:
+        model = AutoModelForSequenceClassification
+    elif "roberta" in model_name:
+        model = AutoModelForSequenceClassification
+    elif "t5" in model_name:
+        model = AutoModelWithLMHead
+    else:
+        model = AutoModel
+
+    return model
+
+
+def get_tokenizer_class(model_name: str) -> str:
+    if "gpt2" in model_name:
+        tokenizer = GPT2Tokenizer
+    else:
+        tokenizer = AutoTokenizer
+
+    return tokenizer
+
+
 def instantiate_model(
     model_str: str,
     device: Union[str, torch.device] = "cpu",
     use_auth_token: Optional[Union[bool, str]] = None,
     **kwargs,
 ) -> PreTrainedModel:
-    """Instantiate a model string with the appropriate `Auto` class."""
+    """Instantiate a model string with the appropriate `Auto` class.
+
+    Args:
+        model_str (str): Full model name. This should match the name in the
+            Hugging Face model hub.
+        device (Union[str, torch.device], optional): The device to use for the model. Defaults to "cpu".
+        use_auth_token (Optional[Union[bool, str]], optional): Optional authentication token for accessing models on the Hugging Face Hub. Defaults to None.
+        **kwargs: Additional keyword arguments to pass to the model instantiation.
+
+    Returns:
+        PreTrainedModel: The instantiated model.
+
+    Raises:
+        ValueError: If attempting to load in 8-bit weights with fp32 weights.
+    """
     device = torch.device(device)
     kwargs["device_map"] = {"": device}
 
     with prevent_name_conflicts():
-        model_cfg = AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)
+        model_cfg = AutoConfig.from_pretrained(
+            model_str, use_auth_token=use_auth_token
+        )
 
         # When the torch_dtype is None, this generally means the model is fp32, because
         # the config was probably created before the `torch_dtype` field was added.
@@ -76,7 +129,9 @@ def instantiate_model(
         # converting them doesn't hurt performance.
         elif fp32_weights and torch.cuda.is_bf16_supported():
             kwargs["torch_dtype"] = torch.bfloat16
-            print("Weights seem to be fp32, but bf16 is available. Loading in bf16.")
+            print(
+                "Weights seem to be fp32, but bf16 is available. Loading in bf16."
+            )
         else:
             kwargs["torch_dtype"] = "auto"
 
@@ -92,50 +147,70 @@ def instantiate_model(
                     model_cls = getattr(transformers, arch_str)
                     return model_cls.from_pretrained(model_str, **kwargs)
 
-        return AutoModel.from_pretrained(model_str, **kwargs)
+        model_cls = get_model_class(model_str)
+        return model_cls.from_pretrained(model_str, **kwargs)
 
 
 def instantiate_tokenizer(model_str: str, **kwargs) -> PreTrainedTokenizerBase:
     """Instantiate a tokenizer, using the fast one iff it exists."""
     with prevent_name_conflicts():
+        tokenizer_cls = get_tokenizer_class(model_str)
         try:
-            return AutoTokenizer.from_pretrained(model_str, use_fast=True, **kwargs)
+            return tokenizer_cls.from_pretrained(
+                model_str, use_fast=True, **kwargs
+            )
         except Exception as e:
             if kwargs.get("verbose", True):
                 print(f"Falling back to slow tokenizer; fast one failed: '{e}'")
 
-            return AutoTokenizer.from_pretrained(model_str, use_fast=False, **kwargs)
+            return tokenizer_cls.from_pretrained(
+                model_str, use_fast=False, **kwargs
+            )
 
 
-def get_model_config(model_str: str, use_auth_token: Optional[Union[bool, str]] = None) -> PretrainedConfig:
+def get_model_config(
+    model_str: str, use_auth_token: Optional[Union[bool, str]] = None
+) -> PretrainedConfig:
     """Return the model config for a given model."""
     return AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)
 
 
-def is_autoregressive(model_cfg: PretrainedConfig, include_enc_dec: bool) -> bool:
+def is_autoregressive(
+    model_cfg: PretrainedConfig, include_enc_dec: bool
+) -> bool:
     """Check if a model config is autoregressive."""
     archs = model_cfg.architectures
     if not isinstance(archs, list):
         return False
 
-    suffixes = _AUTOREGRESSIVE_SUFFIXES if include_enc_dec else _DECODER_ONLY_SUFFIXES
-    return any(arch_str.endswith(suffix) for arch_str in archs for suffix in suffixes)
+    suffixes = (
+        _AUTOREGRESSIVE_SUFFIXES if include_enc_dec else _DECODER_ONLY_SUFFIXES
+    )
+    return any(
+        arch_str.endswith(suffix) for arch_str in archs for suffix in suffixes
+    )
 
 
-def is_decoder_only(model_str: str,
-                    model_cfg: Optional[PretrainedConfig] = None,
-                    use_auth_token: Optional[Union[bool, str]]=None) -> bool:
+def is_decoder_only(
+    model_str: str,
+    model_cfg: Optional[PretrainedConfig] = None,
+    use_auth_token: Optional[Union[bool, str]] = None,
+) -> bool:
     """Check if a model config is decoder-only."""
     if model_cfg is None:
         model_cfg = get_model_config(model_str, use_auth_token=use_auth_token)
     # For some reason, t5-11b is appears as a decoder-only architecture even
     # though it's encoder-decoder.
-    return is_autoregressive(model_cfg, include_enc_dec=False) and model_str not in ["google-t5/t5-11b", "t5-11b"]
+    return is_autoregressive(
+        model_cfg, include_enc_dec=False
+    ) and model_str not in ["google-t5/t5-11b", "t5-11b"]
 
 
-def is_encoder_only(model_str: str,
-                    model_cfg: Optional[PretrainedConfig] = None,
-                    use_auth_token: Optional[Union[bool, str]] = None) -> bool:
+def is_encoder_only(
+    model_str: str,
+    model_cfg: Optional[PretrainedConfig] = None,
+    use_auth_token: Optional[Union[bool, str]] = None,
+) -> bool:
     """Check if a model config is encoder-only."""
     if model_cfg is None:
         model_cfg = get_model_config(model_str, use_auth_token=use_auth_token)

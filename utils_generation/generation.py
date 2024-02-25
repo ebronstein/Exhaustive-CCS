@@ -279,8 +279,8 @@ def getLogits(logits, token_lis, mdl_name, one_prev: bool):
 
 def toNP(x):
     if type(x) == list:
-        return [w.cpu().numpy() for w in x]
-    return x.cpu().numpy()
+        return [w.cpu().to(torch.float32).numpy() for w in x]
+    return x.cpu().to(torch.float32).numpy()
 
 
 def getCalibrated(log_probs_list, labels):
