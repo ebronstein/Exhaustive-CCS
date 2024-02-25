@@ -4,3 +4,6 @@
 __pycache__
 *.zip
 slurm
+*hf_auth_token.py
+generation_results*
+extraction_results*
