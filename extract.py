@@ -55,6 +55,7 @@ PrefixType = Literal[
     "normal-dot",
     "normal-mark",
     "normal-thatsright",
+    "normal-bananashed",
 ]
 
 MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS"]
@@ -101,6 +102,7 @@ def sacred_config():
     save_states: bool = True
     save_params = True
     save_results: bool = True
+    save_train_test_split: bool = True
     test_on_train: bool = False
     project_along_mean_diff: bool = False
     verbose: bool = False
@@ -274,6 +276,14 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         #             "Saved zero-shot performance to %s", eval_results_path
         #         )
 
+    # If only evaluating, load just the eval datasets. Otherwise, load both
+    # the train and eval datasets.
+    if _config["eval_only"]:
+        datasets_to_load = eval_datasets
+    else:
+        datasets_to_load = list(set(train_datasets + eval_datasets))
+
+    data_dict = None
     eval_results = collections.defaultdict(list)
 
     for method in _config["method_list"]:
@@ -290,53 +300,49 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         method_use_concat = (method in {"CCS", "Random"}) or method.startswith(
             "RCCS"
         )
-
         mode = (
             _config["mode"]
             if _config["mode"] != "auto"
             else ("concat" if method_use_concat else "minus")
         )
 
-        # If only evaluating, load just the eval datasets. Otherwise, load both
-        # the train and eval datasets.
-        if _config["eval_only"]:
-            datasets_to_load = eval_datasets
-        else:
-            datasets_to_load = list(set(train_datasets + eval_datasets))
-        data_dict = load_hidden_states_for_datasets(
-            _config["load_dir"],
-            mdl_name=model,
-            dataset_list=datasets_to_load,
-            prefix=prefix,
-            location=_config["location"],
-            layer=_config["layer"],
-            mode=mode,
-            logger=_log,
-        )
-        permutation_dict = {
-            ds: make_permutation_dict(data_dict[ds]) for ds in datasets_to_load
-        }
-        assert data_dict.keys() == set(datasets_to_load)
-        assert permutation_dict.keys() == set(datasets_to_load)
+        # Only generate the data (and other related dictionaries) once to keep
+        # themn the same across methods.
+        if data_dict is None:
+            data_dict = load_hidden_states_for_datasets(
+                _config["load_dir"],
+                mdl_name=model,
+                dataset_list=datasets_to_load,
+                prefix=prefix,
+                location=_config["location"],
+                layer=_config["layer"],
+                mode=mode,
+                logger=_log,
+            )
+            permutation_dict = {
+                ds: make_permutation_dict(data_dict[ds]) for ds in datasets_to_load
+            }
+            assert data_dict.keys() == set(datasets_to_load)
+            assert permutation_dict.keys() == set(datasets_to_load)
 
-        # TODO: maybe projection should get to use other datasets that are
-        # not in the train and eval list. projection_dict is currently being
-        # used to specify the training datasets, so these two uses should be
-        # separated.
-        projection_datasets = (
-            eval_datasets if _config["eval_only"] else train_datasets
-        )
-        projection_dict = {
-            key: list(range(len(data_dict[key]))) for key in projection_datasets
-        }
+            # TODO: maybe projection should get to use other datasets that are
+            # not in the train and eval list. projection_dict is currently being
+            # used to specify the training datasets, so these two uses should be
+            # separated.
+            projection_datasets = (
+                eval_datasets if _config["eval_only"] else train_datasets
+            )
+            projection_dict = {
+                key: list(range(len(data_dict[key]))) for key in projection_datasets
+            }
 
-        test_dict = {ds: range(len(data_dict[ds])) for ds in eval_datasets}
+            test_dict = {ds: range(len(data_dict[ds])) for ds in eval_datasets}
+
 
         n_components = 1 if method == "TPC" else -1
 
         method_str = get_method_str(method)
         method_ = method
-        constraints = None
         if method.startswith("RCCS"):
             method_ = "CCS"
             if method != "RCCS0":
@@ -352,6 +358,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 old_biases = np.load(
                     os.path.join(prev_rccs_params_dir, "intercept.npy")
                 )
+        else:
+            constraints = None
 
         kwargs = dict(
             data_dict=data_dict,
@@ -433,6 +441,15 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 bias,
             )
 
+        # TODO: remove from try block after testing.
+        try:
+            if _config["save_train_test_split"]:
+                load_utils.save_permutation_dict(permutation_dict, run_dir)
+        except Exception as e:
+            _log.error(
+                "Error saving permutation dict: %s", str(e), exc_info=True
+            )
+
         acc, std, loss, sim_loss, cons_loss = (
             getAvg(res),
             np.mean([np.std(lis) for lis in res.values()]),
@@ -496,6 +513,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             eval_dir = load_utils.get_eval_dir(run_dir, ds)
             if not os.path.exists(eval_dir):
                 os.makedirs(eval_dir)
+
+            # Save the evaluation results to a CSV file.
             eval_results_path = load_utils.get_eval_results_path(run_dir, ds)
             ds_eval_results_df = pd.DataFrame(ds_eval_results)
             ds_eval_results_df.to_csv(eval_results_path, index=False)

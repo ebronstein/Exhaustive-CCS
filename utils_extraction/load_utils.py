@@ -74,6 +74,17 @@ def get_eval_results_path(run_dir: str, dataset: str) -> str:
     return os.path.join(eval_dir, "eval.csv")
 
 
+def get_permutation_dict_path(run_dir: str, dataset: str) -> str:
+    eval_dir = get_eval_dir(run_dir, dataset)
+    return os.path.join(eval_dir, "train_test_split.npy")
+
+
+def save_permutation_dict(permutation_dict: PermutationDictType, run_dir: str):
+    for ds, ds_permutation_dict in permutation_dict.items():
+        permutation_dict_path = get_permutation_dict_path(run_dir, ds)
+        np.save(permutation_dict_path, ds_permutation_dict)
+
+
 def maybe_append_project_suffix(method, project_along_mean_diff):
     if project_along_mean_diff:
         return method + "-md"
