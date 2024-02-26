@@ -13,7 +13,7 @@ INTERCEPT_FILENAME = "intercept.npy"
 
 
 def get_combined_datasets_str(datasets: Union[str, list[str]]) -> str:
-    return datasets if isinstance(datasets, str) else "+".join(datasets)
+    return datasets if isinstance(datasets, str) else "+".join(sorted(datasets))
 
 
 def get_exp_dir(
