@@ -375,6 +375,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             test_on_train=_config["test_on_train"],
             project_along_mean_diff=project_along_mean_diff,
             seed=seed,
+            logger=_log,
         )
         if _config["eval_only"]:
             load_params_dir = get_params_dir(

@@ -14,6 +14,11 @@ from sklearn.linear_model import LogisticRegression
 
 from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
 from utils_extraction import load_utils, metrics
+from utils_extraction.classifier import (
+    assert_close_to_orthonormal,
+    normalize,
+    project_coeff,
+)
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR",)
@@ -161,32 +166,6 @@ def project(x, along_directions):
         )
 
 
-def project_coeff(coef_and_bias, along_directions):
-    if along_directions is None:
-        return coef_and_bias
-
-    new_coef = project(coef_and_bias[:, :-1], along_directions)
-    bias = coef_and_bias[:, -1]
-    if isinstance(coef_and_bias, torch.Tensor):
-        return torch.cat([new_coef, bias.unsqueeze(-1)], dim=-1)
-    elif isinstance(coef_and_bias, np.ndarray):
-        return np.concatenate([new_coef, bias[:, None]], axis=-1)
-    else:
-        raise ValueError(
-            "coef_and_bias should be either torch.Tensor or np.ndarray"
-        )
-
-
-def normalize(directions):
-    return directions / np.linalg.norm(directions, axis=-1, keepdims=True)
-
-
-def assert_close_to_orthonormal(directions, atol=1e-3):
-    assert np.allclose(
-        directions @ directions.T, np.eye(directions.shape[0]), atol=atol
-    ), "Not orthonormal"
-
-
 class ConsistencyMethod(object):
     def __init__(
         self, verbose=False, include_bias=True, no_train=False, constraints=None
@@ -290,7 +269,9 @@ class ConsistencyMethod(object):
         )
 
     # return the probability tuple (p0, p1)
-    def transform(self, data: list, theta_np=None):
+    def transform(
+        self, data: list, theta_np=None
+    ) -> tuple[np.ndarray, np.ndarray]:
         if theta_np is None:
             theta_np = self.best_theta
         z0, z1 = torch.tensor(
@@ -300,38 +281,20 @@ class ConsistencyMethod(object):
 
         return p0, p1
 
-    def predict_probs(self, data):
+    def predict_probs(self, p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
         """Predicts class 1 probabilities for data."""
-        p0, p1 = self.transform(data, self.best_theta)
         return 0.5 * (p1 + (1 - p0))
 
-    # Return the accuracy of (data, label)
-    def get_acc(
-        self, theta_np, data: list, label, getloss=False, save_file=None
-    ):
+    def get_acc(self, theta_np, data: list, label) -> float:
         """
         Computes the accuracy of a given direction theta_np represented as a numpy array
         """
         p0, p1 = self.transform(data, theta_np)
-        avg_confidence = 0.5 * (p1 + (1 - p0))
+        avg_confidence = self.predict_probs(p0, p1)
 
         label = label.reshape(-1)
         predictions = (avg_confidence >= 0.5).astype(int)[:, 0]
-        acc = (predictions == label).mean()
-
-        # TODO: move this out of this function
-        if save_file is not None:
-            # save (p0, p1, label) to file using pandas
-            df = pd.DataFrame({"p0": p0[:, 0], "p1": p1[:, 0], "label": label})
-            df.to_csv(save_file, index=False)
-
-        if getloss:
-            losses = [
-                l.cpu().detach().item()
-                for l in self.get_losses(torch.tensor(p0), torch.tensor(p1))
-            ]
-            return acc, losses
-        return acc
+        return (predictions == label).mean()
 
     def train(self):
         """
@@ -470,7 +433,7 @@ class ConsistencyMethod(object):
             theta_np, loss = self.train()
 
             # evaluate
-            acc = self.get_acc(theta_np, data, label, getloss=False)
+            acc = self.get_acc(theta_np, data, label)
 
             # save
             losses.append(loss)
@@ -493,11 +456,32 @@ class ConsistencyMethod(object):
 
         return self.best_theta, self.best_loss, best_acc
 
-    def score(self, data: list, label, getloss=False, save_file=None):
+    def score(self, data: list, label, get_loss=True, get_probs=True) -> tuple[
+        float,
+        Optional[list[float]],
+        Optional[np.ndarray],
+        Optional[np.ndarray],
+        Optional[np.ndarray],
+    ]:
         self.validate_data(data)
-        return self.get_acc(
-            self.best_theta, data, label, getloss, save_file=save_file
-        )
+        acc = self.get_acc(self.best_theta, data, label)
+
+        if get_probs or get_loss:
+            p0, p1 = self.transform(data, self.best_theta)
+            probs = self.predict_probs(p0, p1)
+        else:
+            p0 = None
+            p1 = None
+
+        if get_loss:
+            losses = [
+                loss.cpu().detach().item()
+                for loss in self.get_losses(torch.tensor(p0), torch.tensor(p1))
+            ]
+        else:
+            losses = None
+
+        return acc, losses, probs, p0, p1
 
 
 CLASSIFICATION_METHODS = ["TPC", "LR", "BSS", "KMeans"]
@@ -714,38 +698,50 @@ class myClassifyModel(LogisticRegression):
             return super().predict_proba(data)[..., 1]
 
     def score(
-        self, data, label, getloss=False, sample_weight=None, save_file=None
-    ):
-        # TODO: move file saving out of this function.
+        self,
+        data,
+        label,
+        get_loss=False,
+        get_probs=False,
+        sample_weight=None,
+    ) -> tuple[
+        float,
+        Optional[list[float]],
+        Optional[np.ndarray],
+        Optional[np.ndarray],
+        Optional[np.ndarray],
+    ]:
         if self.method == "KMeans":
-            if save_file is not None:
-                print("save_file not supported for KMeans")
-
             prediction = self.model.predict(data)
             acc = np.mean(prediction == label)
-            if getloss:
-                return acc, (0.0, 0.0, 0.0)
-            return acc
-        else:
-            if save_file is not None:
-                # compute for save_file
-                predictions = super().predict_proba(data)
-                df = pd.DataFrame(
-                    {"label": label, "prediction": predictions[:, 1]}
-                )
-                df.to_csv(save_file, index=False)
+            return acc, prediction, None, None
 
-            if sample_weight is not None:
-                acc = super().score(data, label, sample_weight)
+        if get_probs:
+            probs = super().predict_proba(data)
+            p0 = probs[:, 0]
+            p1 = probs[:, 1]
+            # Return the probability of class 1
+            probs = p1
+        else:
+            probs = None
+            p0 = None
+            p1 = None
+
+        if sample_weight is not None:
+            acc = super().score(data, label, sample_weight)
+        else:
+            acc = super().score(data, label)
+
+        if get_loss:
+            if self.method == "BSS":
+                loss = getSingleLoss(data @ self.coef_.T + self.intercept_)
+                # Total loss is `loss`, consistency and confidence
+                # loss do not apply to BSS.
+                losses = (loss, 0.0, 0.0)
             else:
-                acc = super().score(data, label)
-            if getloss:
-                if self.method == "BSS":
-                    loss = getSingleLoss(data @ self.coef_.T + self.intercept_)
-                else:
-                    loss = (0.0, 0.0, 0.0)
-                return acc, loss
-            return acc
+                losses = None
+
+        return acc, losses, probs, p0, p1
 
 
 def getConcat(data_list, axis=0):
@@ -840,6 +836,7 @@ def mainResults(
     run_dir: Optional[str] = None,
     seed: Optional[str] = None,
     run_id: Optional[str] = None,
+    logger=None,
 ):
     """
     Calculate the main results.
@@ -1000,6 +997,7 @@ def mainResults(
         run_dir=run_dir,
         seed=seed,
         run_id=run_id,
+        logger=logger,
     )
 
 
@@ -1021,6 +1019,7 @@ def eval(
     run_dir: Optional[str] = None,
     seed: Optional[str] = None,
     run_id: Optional[str] = None,
+    logger=None,
 ):
     if classification_method not in typing.get_args(
         EvalClassificationMethodType
@@ -1110,26 +1109,48 @@ def eval(
                     data[:, data.shape[1] // 2 :],
                 ]
 
-            # TODO: save probs directly to the given path instead of to a CSV
-            # in the directory.
-            if save_probs:
-                save_probs_file = load_utils.get_probs_save_path(
-                    eval_dir,
-                    classification_method,
-                    project_along_mean_diff,
-                    prompt_idx,
-                )
-            else:
-                save_probs_file = None
-
-            acc, losses = classify_model.score(
-                data, label, getloss=True, save_file=save_probs_file
+            acc, losses, probs, p0, p1 = classify_model.score(
+                data, label, get_loss=True, get_probs=True
             )
-            predicted_probs = classify_model.predict_probs(data).flatten()
-            ece = metrics.expected_calibration_error(predicted_probs, label)[0]
-            ece_flip = metrics.expected_calibration_error(
-                1 - predicted_probs, label
-            )[0]
+            if probs is None and not (p0 is None and p1 is None):
+                raise ValueError(
+                    "probs is None but p0 and p1 are not both None."
+                )
+
+            # Arbitrarily set losses to 0 if the method does not provide them.
+            losses = losses or (0.0, 0.0, 0.0)
+
+            if probs is not None:
+                probs = probs.flatten()
+                ece = metrics.expected_calibration_error(probs, label)[0]
+                ece_flip = metrics.expected_calibration_error(1 - probs, label)[
+                    0
+                ]
+
+                if save_probs:
+                    save_probs_file = load_utils.get_probs_save_path(
+                        eval_dir,
+                        classification_method,
+                        project_along_mean_diff,
+                        prompt_idx,
+                    )
+                    probs_dict = {"prob": probs}
+                    if p0 is not None:
+                        probs_dict["p0"] = p0.flatten()
+                    if p1 is not None:
+                        probs_dict["p1"] = p1.flatten()
+                    probs_dict["label"] = label
+                    df = pd.DataFrame(probs_dict)
+                    df.to_csv(save_probs_file, index=False)
+            else:
+                if logger is not None:
+                    logger.warning(
+                        "p0 and p1 are None for classification method "
+                        f"{classification_method}, not saving probabilities."
+                    )
+                ece = None
+                ece_flip = None
+
             res[dataset].append(acc)
             lss[dataset].append(losses)
             ece_dict[dataset].append((ece, ece_flip))
