@@ -58,7 +58,7 @@ PrefixType = Literal[
     "normal-bananashed",
 ]
 
-MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS"]
+MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR"]
 
 ex = Experiment()
 
@@ -87,8 +87,10 @@ def sacred_config():
     name: str = "extraction"
     model = "/scratch/data/meta-llama/Llama-2-7b-chat-hf"
     datasets: Union[str, list[str]] = "imdb"
+    labeled_datasets: Optional[Union[str, list[str]]] = None
     prefix: PrefixType = "normal"
     data_num: int = 1000
+    n_tries: int = 10
     method_list: Union[MethodType, list[MethodType]] = "CCS"
     mode: Literal["auto", "minus", "concat"] = "auto"
     save_dir = "extraction_results"
@@ -122,7 +124,9 @@ def sacred_config():
     # Otherwise, the specified run ID will be used.
     load_params_run_id: Union[int, Literal["latest"]] = "latest"
 
-    exp_dir = load_utils.get_exp_dir(save_dir, name, model, datasets, seed)
+    exp_dir = load_utils.get_exp_dir(
+        save_dir, name, model, datasets, seed, labeled_datasets=labeled_datasets
+    )
     ex.observers.append(FileStorageObserver(exp_dir, copy_sources=False))
 
 
@@ -150,7 +154,7 @@ def _format_config(config: dict) -> dict:
     config = _convert_dogmatics_to_standard(config)
 
     # Convert single strings to lists.
-    for key in ["datasets", "eval_datasets", "method_list"]:
+    for key in ["datasets", "labeled_datasets", "eval_datasets", "method_list"]:
         if isinstance(config[key], str):
             config[key] = [config[key]]
 
@@ -167,7 +171,8 @@ def _format_config(config: dict) -> dict:
 @ex.automain
 def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     _config = _format_config(_config)
-    train_datasets = _config["datasets"]
+    unlabeled_train_datasets = _config["datasets"]
+    labeled_train_datasets = _config["labeled_datasets"] or {}
     eval_datasets = _config["eval_datasets"]
     prefix = _config["prefix"]
 
@@ -181,8 +186,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             _config["load_params_save_dir"],
             _config["load_params_name"],
             model,
-            train_datasets,
+            unlabeled_train_datasets,
             seed,
+            labeled_datasets=labeled_train_datasets,
         )
         load_params_run_id = _config["load_params_run_id"]
         if load_params_run_id == "latest":
@@ -281,7 +287,13 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     if _config["eval_only"]:
         datasets_to_load = eval_datasets
     else:
-        datasets_to_load = list(set(train_datasets + eval_datasets))
+        datasets_to_load = list(
+            set(
+                unlabeled_train_datasets
+                + labeled_train_datasets
+                + eval_datasets
+            )
+        )
 
     data_dict = None
     eval_results = collections.defaultdict(list)
@@ -320,7 +332,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 logger=_log,
             )
             permutation_dict = {
-                ds: make_permutation_dict(data_dict[ds]) for ds in datasets_to_load
+                ds: make_permutation_dict(data_dict[ds])
+                for ds in datasets_to_load
             }
             assert data_dict.keys() == set(datasets_to_load)
             assert permutation_dict.keys() == set(datasets_to_load)
@@ -330,14 +343,23 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             # used to specify the training datasets, so these two uses should be
             # separated.
             projection_datasets = (
-                eval_datasets if _config["eval_only"] else train_datasets
+                eval_datasets
+                if _config["eval_only"]
+                else set(unlabeled_train_datasets + labeled_train_datasets)
             )
             projection_dict = {
-                key: list(range(len(data_dict[key]))) for key in projection_datasets
+                key: list(range(len(data_dict[key])))
+                for key in projection_datasets
+            }
+
+            unlabeled_train_data_dict = {
+                ds: range(len(data_dict[ds])) for ds in unlabeled_train_datasets
+            }
+            labeled_train_data_dict = {
+                ds: range(len(data_dict[ds])) for ds in labeled_train_datasets
             }
 
             test_dict = {ds: range(len(data_dict[ds])) for ds in eval_datasets}
-
 
         n_components = 1 if method == "TPC" else -1
 
@@ -363,13 +385,18 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         kwargs = dict(
             data_dict=data_dict,
+            unlabeled_train_data_dict=unlabeled_train_data_dict,
             permutation_dict=permutation_dict,
             test_dict=test_dict,
             projection_dict=projection_dict,
+            labeled_train_data_dict=labeled_train_data_dict,
             projection_method="PCA",
             n_components=n_components,
             prefix=prefix,
             classification_method=method_,
+            learn_dict=dict(
+                n_tries=_config["n_tries"],
+            ),
             print_more=_config["verbose"],
             save_probs=_config["save_states"],
             test_on_train=_config["test_on_train"],
@@ -398,7 +425,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_id=run_id,
                 **kwargs,
             )
-            res, lss, ece, pmodel, cmodel = mainResults(**main_results_kwargs)
+            res, lss, ece, pmodel, cmodel, fit_result = mainResults(
+                **main_results_kwargs
+            )
 
         # Save parameters if needed.
         if (
@@ -433,6 +462,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if method != "RCCS0":
                     coef = np.concatenate([constraints, coef], axis=0)
                     bias = np.concatenate([old_biases, bias], axis=0)
+            # TODO: save CSS+LR using torch.save.
+            elif method == "CSS+LR":
+                raise NotImplementedError()
             else:
                 assert False
 
@@ -451,11 +483,17 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 "Error saving permutation dict: %s", str(e), exc_info=True
             )
 
-        acc, std, loss, sim_loss, cons_loss = (
-            getAvg(res),
-            np.mean([np.std(lis) for lis in res.values()]),
-            *np.mean([np.mean(lis, axis=0) for lis in lss.values()], axis=0),
-        )
+        acc = getAvg(res)
+        std = np.mean([np.std(lis) for lis in res.values()])
+
+        # TODO: standardize losses
+        if method == "CCS+LR":
+            losses = None
+        else:
+            losses = np.mean(
+                [np.mean(lis, axis=0) for lis in lss.values()], axis=0
+            )
+
         ece_dict = {
             key: [ece[0] for ece in ece_vals] for key, ece_vals in ece.items()
         }
@@ -465,17 +503,17 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         mean_ece = getAvg(ece_dict)
         mean_ece_flip = getAvg(ece_flip_dict)
 
-        train_sets_str = load_utils.get_combined_datasets_str(train_datasets)
+        train_sets_str = load_utils.get_combined_datasets_str(
+            unlabeled_train_datasets, labeled_train_datasets
+        )
         _log.info(
-            "method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, loss is {:.4f}, sim_loss is {:.4f}, cons_loss is {:.4f}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
+            "method = {:8}, prompt_level = {:8}, train_set = {:10}, avgacc is {:.2f}, std is {:.2f}, losses are {}, ECE is {:.4f}, ECE (1-p) is {:.4f}".format(
                 maybe_append_project_suffix(method, project_along_mean_diff),
                 "all",
                 train_sets_str,
                 100 * acc,
                 100 * std,
-                loss,
-                sim_loss,
-                cons_loss,
+                losses,
                 mean_ece,
                 mean_ece_flip,
             )
@@ -488,26 +526,28 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             # a list of the accuracy (same for the other results from
             # `mainResults`).
             for prompt_idx in range(len(res[test_set])):
-                eval_results[test_set].append(
-                    {
-                        "model": model_short_name,
-                        "prefix": prefix,
-                        "method": maybe_append_project_suffix(
-                            method, project_along_mean_diff
-                        ),
-                        "prompt_level": prompt_idx,
-                        "train": train_sets_str,
-                        "test": test_set,
-                        "location": _config["location"],
-                        "layer": _config["layer"],
-                        "accuracy": res[test_set][prompt_idx],
-                        "ece": ece_dict[test_set][prompt_idx],
-                        "ece_flip": ece_flip_dict[test_set][prompt_idx],
-                        "loss": loss,
-                        "sim_loss": sim_loss,
-                        "cons_loss": cons_loss,
-                    }
-                )
+                eval_result = {
+                    "model": model_short_name,
+                    "prefix": prefix,
+                    "method": maybe_append_project_suffix(
+                        method, project_along_mean_diff
+                    ),
+                    "prompt_level": prompt_idx,
+                    "train": train_sets_str,
+                    "test": test_set,
+                    "location": _config["location"],
+                    "layer": _config["layer"],
+                    "accuracy": res[test_set][prompt_idx],
+                    "ece": ece_dict[test_set][prompt_idx],
+                    "ece_flip": ece_flip_dict[test_set][prompt_idx],
+                }
+                # TODO: standardize losses.
+                if losses:
+                    loss, sim_loss, cons_loss = losses
+                    eval_result["loss"] = loss
+                    eval_result["sim_loss"] = sim_loss
+                    eval_result["cons_loss"] = cons_loss
+                eval_results[test_set].append(eval_result)
 
     if _config["save_results"]:
         for ds, ds_eval_results in eval_results.items():

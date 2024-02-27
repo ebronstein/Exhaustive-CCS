@@ -16,15 +16,16 @@ from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
 from utils_extraction import load_utils, metrics
 from utils_extraction.classifier import (
     assert_close_to_orthonormal,
+    fit,
     normalize,
     project_coeff,
     project_data_along_axis,
 )
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
-SUPERVISED_METHODS = ("LR",)
+SUPERVISED_METHODS = ("LR", "CCS+LR")
 
-EvalClassificationMethodType = Literal["LR", "BSS", "CCS"]
+EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR"]
 
 
 def is_method_unsupervised(method):
@@ -787,9 +788,11 @@ def getPair(
 
 def mainResults(
     data_dict: DataDictType,
+    unlabeled_train_data_dict: PromptIndicesDictType,
     permutation_dict: PermutationDictType,
     test_dict: PromptIndicesDictType,
     projection_dict: PromptIndicesDictType,
+    labeled_train_data_dict: Optional[PromptIndicesDictType] = None,
     projection_method="PCA",
     n_components: int = 2,
     projection_only=False,
@@ -884,12 +887,14 @@ def mainResults(
 
     # pairFunc = partial(getPair, data_dict = data_dict, permutation_dict = permutation_dict, projection_model = projection_model)
 
+    # TODO: standardize fit_result.
+    fit_result = None
     if classification_method == "CCS":
         classify_model = ConsistencyMethod(
             no_train=no_train, verbose=print_more, constraints=constraints
         )
         datas, label = getPair(
-            target_dict=projection_dict,
+            target_dict=unlabeled_train_data_dict,
             data_dict=data_dict,
             permutation_dict=permutation_dict,
             projection_model=projection_model,
@@ -904,6 +909,42 @@ def mainResults(
         ]
 
         classify_model.fit(data=data, label=label, **learn_dict)
+    elif classification_method == "CCS+LR":
+        if not labeled_train_data_dict:
+            raise ValueError("supervised_data_dict must be non-empty.")
+        # Labeled data.
+        x1_pair, y1 = getPair(
+            target_dict=labeled_train_data_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+        )
+        assert len(x1_pair.shape) == 2
+        if project_along_mean_diff:
+            x1_pair = project_data_along_axis(x1_pair, y1)
+        x_pos1 = x1_pair[:, : x1_pair.shape[1] // 2]
+        x_neg1 = x1_pair[:, x1_pair.shape[1] // 2 :]
+        # Unlabeled data.
+        x2_pair, y2 = getPair(
+            target_dict=unlabeled_train_data_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+        )
+        assert len(x2_pair.shape) == 2
+        if project_along_mean_diff:
+            x2_pair = project_data_along_axis(x2_pair, y2)
+        x_pos2 = x2_pair[:, : x2_pair.shape[1] // 2]
+        x_neg2 = x2_pair[:, x2_pair.shape[1] // 2 :]
+
+        # Train the model.
+        fit_result = fit(
+            x_pos1, x_neg1, y1, x_pos2, x_neg2, y2, verbose=True, **learn_dict
+        )
+        classify_model = fit_result["best_probe"]
+
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -915,11 +956,13 @@ def mainResults(
                 permutation_dict=permutation_dict,
                 projection_model=projection_model,
             )
-            for key, l in projection_dict.items()
+            for key, l in unlabeled_train_data_dict.items()
             for idx in l
         ]
 
-        weights = [1 / len(l) for l in projection_dict.values() for _ in l]
+        weights = [
+            1 / len(l) for l in unlabeled_train_data_dict.values() for _ in l
+        ]
 
         classify_model = myClassifyModel(
             method=classification_method, print_more=print_more
@@ -936,10 +979,10 @@ def mainResults(
             classification_method, print_more=print_more
         )
         data, labels = getPair(
+            target_dict=unlabeled_train_data_dict,
             data_dict=data_dict,
             permutation_dict=permutation_dict,
             projection_model=projection_model,
-            target_dict=projection_dict,
         )
 
         if project_along_mean_diff:
@@ -947,8 +990,9 @@ def mainResults(
 
         classify_model.fit(data, labels)
 
-    return eval(
+    eval_result = eval(
         data_dict,
+        # Arbitrarily use the unsupervised permut
         permutation_dict,
         test_dict,
         projection_dict,
@@ -967,6 +1011,8 @@ def mainResults(
         run_id=run_id,
         logger=logger,
     )
+
+    return *eval_result, fit_result
 
 
 def eval(
@@ -1077,9 +1123,41 @@ def eval(
                     data[:, data.shape[1] // 2 :],
                 ]
 
-            acc, losses, probs, p0, p1 = classify_model.score(
-                data, label, get_loss=True, get_probs=True
-            )
+            if classification_method == "CCS+LR":
+                device = classify_model.device
+                x_pos = torch.tensor(
+                    data[:, : data.shape[1] // 2], device=device
+                )
+                x_neg = torch.tensor(
+                    data[:, data.shape[1] // 2 :], device=device
+                )
+                y = torch.tensor(label, device=device).float().view(-1, 1)
+                acc = classify_model.evaluate_accuracy(x_pos, x_neg, y)
+                # TODO: modularize this since it's already computed in the call to evaluate_accuracy.
+                with torch.no_grad():
+                    classify_model.eval()
+                    p1 = (
+                        classify_model.predict(x_pos)
+                        .float()
+                        .cpu()
+                        .numpy()
+                        .flatten()
+                    )
+                    p0 = (
+                        classify_model.predict(x_neg)
+                        .float()
+                        .cpu()
+                        .numpy()
+                        .flatten()
+                    )
+                    probs = ((p1 + 1 - p0) / 2)
+                    losses = classify_model.compute_loss(
+                        x_pos, x_neg, y, x_pos, x_neg, y
+                    )
+            else:
+                acc, losses, probs, p0, p1 = classify_model.score(
+                    data, label, get_loss=True, get_probs=True
+                )
             if probs is None and not (p0 is None and p1 is None):
                 raise ValueError(
                     "probs is None but p0 and p1 are not both None."

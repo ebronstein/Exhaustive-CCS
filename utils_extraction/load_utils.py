@@ -12,8 +12,19 @@ COEF_FILENAME = "coef.npy"
 INTERCEPT_FILENAME = "intercept.npy"
 
 
-def get_combined_datasets_str(datasets: Union[str, list[str]]) -> str:
-    return datasets if isinstance(datasets, str) else "+".join(sorted(datasets))
+def get_combined_datasets_str(
+    datasets: Union[str, list[str]],
+    labeled_datasets: Optional[Union[str, list[str]]] = None,
+) -> str:
+    datasets_str = (
+        datasets if isinstance(datasets, str) else "+".join(sorted(datasets))
+    )
+    labeled_datasets_str = (
+        labeled_datasets
+        if isinstance(labeled_datasets, str)
+        else "+".join(sorted(labeled_datasets))
+    )
+    return f"nolabel_{datasets_str}-label_{labeled_datasets_str}"
 
 
 def get_exp_dir(
@@ -22,9 +33,10 @@ def get_exp_dir(
     model: str,
     train_sets: Union[str, list[str]],
     seed: int,
+    labeled_datasets: Optional[Union[str, list[str]]] = None,
 ):
     model_short_name = get_model_short_name(model)
-    train_sets_str = get_combined_datasets_str(train_sets)
+    train_sets_str = get_combined_datasets_str(train_sets, labeled_datasets)
     return os.path.join(
         save_dir, name, model_short_name, train_sets_str, f"seed_{seed}"
     )
@@ -82,6 +94,9 @@ def get_permutation_dict_path(run_dir: str, dataset: str) -> str:
 def save_permutation_dict(permutation_dict: PermutationDictType, run_dir: str):
     for ds, ds_permutation_dict in permutation_dict.items():
         permutation_dict_path = get_permutation_dict_path(run_dir, ds)
+        permutation_dict_dir = os.path.dirname(permutation_dict_path)
+        if not os.path.exists(permutation_dict_dir):
+            os.makedirs(permutation_dict_dir)
         np.save(permutation_dict_path, ds_permutation_dict)
 
 
