@@ -18,6 +18,7 @@ from utils_extraction.classifier import (
     assert_close_to_orthonormal,
     normalize,
     project_coeff,
+    project_data_along_axis,
 )
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
@@ -143,27 +144,6 @@ def get_all_data(data_dict):
     )
 
     return hs0, hs1, all_labels
-
-
-def project(x, along_directions):
-    """Project x along the along_directions.
-
-    x of shape (..., d) and along_directions of shape (n_directions, d)"""
-    if isinstance(x, torch.Tensor) and isinstance(
-        along_directions, torch.Tensor
-    ):
-        inner_products = torch.einsum("...d,nd->...n", x, along_directions)
-        return x - torch.einsum(
-            "...n,nd->...d", inner_products, along_directions
-        )
-    elif isinstance(x, np.ndarray) and isinstance(along_directions, np.ndarray):
-        inner_products = np.einsum("...d,nd->...n", x, along_directions)
-        return x - np.einsum("...n,nd->...d", inner_products, along_directions)
-    else:
-        raise ValueError(
-            "x and along_directions should be both torch.Tensor or np.ndarray"
-            f"Found {type(x)} and {type(along_directions)}"
-        )
 
 
 class ConsistencyMethod(object):
@@ -803,18 +783,6 @@ def getPair(
     data, label = getConcat([w[0] for w in lis]), getConcat([w[1] for w in lis])
 
     return data, label
-
-
-def project_data_along_axis(data, labels):
-    # data: (n_samples, n_features)
-    assert data.shape[0] == labels.shape[0]
-    assert len(data.shape) == 2
-    mean0 = np.mean(data[labels == 0], axis=0)
-    mean1 = np.mean(data[labels == 1], axis=0)
-    mean_diff = mean1 - mean0
-    mean_diff /= np.linalg.norm(mean_diff)
-    mean_diff = mean_diff.reshape(1, -1)
-    return project(data, mean_diff)
 
 
 def mainResults(
