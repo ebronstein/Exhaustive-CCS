@@ -309,6 +309,9 @@ def make_contrast_pair_data(
     if project_along_mean_diff:
         x_pair = project_data_along_axis(x_pair, y)
 
+    # Convert to float32 since x_pair can be float16 when loaded.
+    x_pair = x_pair.astype(np.float32)
+
     if split_pair:
         if x_pair.shape[1] % 2 != 0:
             raise ValueError(
