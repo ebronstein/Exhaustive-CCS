@@ -6,24 +6,50 @@ import numpy as np
 import pandas as pd
 
 from utils.file_utils import get_model_short_name
-from utils.types import DataDictType, PermutationDictType
+from utils.plotting import plot_accuracy, plot_history
+from utils.types import DataDictType, Mode, PermutationDictType
+
+ALL_DATASETS = [
+    "imdb",
+    "amazon-polarity",
+    "ag-news",
+    "dbpedia-14",
+    "copa",
+    "rte",
+    "boolq",
+    "qnli",
+    "piqa",
+]
 
 COEF_FILENAME = "coef.npy"
 INTERCEPT_FILENAME = "intercept.npy"
+
+
+def replace_burns_datasets(datasets: list[str]) -> list[str]:
+    if "burns" in datasets:
+        datasets.remove("burns")
+        datasets.extend(ALL_DATASETS)
+    return datasets
+
+
+def get_datasets_str(datasets: Union[str, list[str]]) -> str:
+    if isinstance(datasets, str):
+        datasets = [datasets]
+    datasets = replace_burns_datasets(datasets)
+    # Remove duplicates.
+    datasets = list(set(datasets))
+    return "+".join(sorted(datasets))
 
 
 def get_combined_datasets_str(
     datasets: Union[str, list[str]],
     labeled_datasets: Optional[Union[str, list[str]]] = None,
 ) -> str:
-    datasets_str = (
-        datasets if isinstance(datasets, str) else "+".join(sorted(datasets))
-    )
-    labeled_datasets_str = (
-        labeled_datasets
-        if isinstance(labeled_datasets, str)
-        else "+".join(sorted(labeled_datasets))
-    )
+    datasets_str = get_datasets_str(datasets)
+    if not labeled_datasets:
+        return datasets_str
+
+    labeled_datasets_str = get_datasets_str(labeled_datasets)
     return f"nolabel_{datasets_str}-label_{labeled_datasets_str}"
 
 
@@ -40,6 +66,10 @@ def get_exp_dir(
     return os.path.join(
         save_dir, name, model_short_name, train_sets_str, f"seed_{seed}"
     )
+
+
+def get_train_dir(run_dir: str) -> str:
+    return os.path.join(run_dir, "train")
 
 
 def get_eval_dir(run_dir: str, dataset: str) -> str:
@@ -65,6 +95,30 @@ def load_params(
         np.load(intercept_path) if os.path.exists(intercept_path) else None
     )
     return coef, intercept
+
+
+def save_fit_result(fit_result: dict, run_dir: str, method: str, logger=None):
+    train_dir = get_train_dir(run_dir)
+    if not os.path.exists(train_dir):
+        os.makedirs(train_dir)
+    fit_result_path = os.path.join(train_dir, f"fit_result_{method}.json")
+    with open(fit_result_path, "w") as f:
+        json.dump(fit_result, f)
+    if logger is not None:
+        logger.info(f"Saved fit result for {method} to {fit_result_path}")
+
+
+def save_fit_plots(fit_result: dict, run_dir: str, method: str, logger=None):
+    train_dir = get_train_dir(run_dir)
+    fit_plots_dir = os.path.join(train_dir, f"fit_plots_{method}")
+    if not os.path.exists(fit_plots_dir):
+        os.makedirs(fit_plots_dir)
+
+    history_save_path = os.path.join(fit_plots_dir, "history.png")
+    plot_history(fit_result, save_path=history_save_path, logger=logger)
+
+    accuracy_save_path = os.path.join(fit_plots_dir, "accuracy.png")
+    plot_accuracy(fit_result, save_path=accuracy_save_path)
 
 
 def save_params(save_dir, coef: np.ndarray, intercept: Optional[np.ndarray]):
@@ -180,14 +234,14 @@ def get_hidden_states_dirs(
 
 
 def organize_hidden_states(
-    hidden_states: tuple[np.ndarray], mode: str
+    hidden_states: tuple[np.ndarray, np.ndarray],
+    mode: Mode,
 ) -> np.ndarray:
     """Organize the hidden states according to `mode`.
 
     Args:
         hidden_states (tuple): A tuple of hidden states corresponding to class
-            "0" and class "1". Note that the classes may be arbitrary when using
-            an unsupervised method.
+            "0" and class "1".
         mode (str): The mode to organize the hidden states.
             Valid values are "0", "1", "minus", and "concat".
 

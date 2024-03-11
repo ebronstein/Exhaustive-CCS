@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from typing import List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
@@ -7,6 +7,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
+from utils_extraction.data_utils import getPair
+from utils_extraction.projection import myReduction
 
 Tensor = Union[torch.Tensor, np.ndarray]
 ContrastPairNp = tuple[np.ndarray, np.ndarray]
@@ -91,30 +95,44 @@ class ContrastPairClassifier(nn.Module):
 
     def compute_loss(
         self,
-        x_pos1: torch.Tensor,
-        x_neg1: torch.Tensor,
-        y1: torch.Tensor,
-        x_pos2: torch.Tensor,
-        x_neg2: torch.Tensor,
+        sup_x0: torch.Tensor,
+        sup_x1: torch.Tensor,
+        sup_y: torch.Tensor,
+        unsup_x0: torch.Tensor,
+        unsup_x1: torch.Tensor,
         unsup_weight=1.0,
+        sup_weight=1.0,
+        # l2_weight=0.0,
     ) -> OrderedDict:
-        supervised_loss = nn.BCELoss()(self.predict(x_pos1), y1) + nn.BCELoss()(
-            self.predict(x_neg1), 1 - y1
-        )
+        bce_loss_0 = nn.BCELoss()(self.predict(sup_x0), 1 - sup_y)
+        bce_loss_1 = nn.BCELoss()(self.predict(sup_x1), sup_y)
+        supervised_loss = 0.5 * (bce_loss_0 + bce_loss_1)
 
-        p_pos2 = self.predict(x_pos2)
-        p_neg2 = self.predict(x_neg2)
-        consistency_loss = ((p_neg2 - (1 - p_pos2)) ** 2).mean()
-        confidence_loss = torch.min(p_neg2, p_pos2).pow(2).mean()
+        unsup_prob_0 = self.predict(unsup_x0)
+        unsup_prob_1 = self.predict(unsup_x1)
+        consistency_loss = ((unsup_prob_0 - (1 - unsup_prob_1)) ** 2).mean()
+        confidence_loss = torch.min(unsup_prob_0, unsup_prob_1).pow(2).mean()
         unsupervised_loss = consistency_loss + confidence_loss
 
-        total_loss = supervised_loss + unsup_weight * unsupervised_loss
+        # L2 regularization loss.
+        # l2_reg_loss = torch.tensor(0.0).to(self.device)
+        # for param in self.linear.parameters():
+        #     l2_reg_loss += torch.norm(param) ** 2
+
+        total_loss = (
+            sup_weight * supervised_loss
+            + unsup_weight * unsupervised_loss
+            # + l2_weight * l2_reg_loss
+        )
 
         return OrderedDict(
             [
                 ("total_loss", total_loss),
                 ("supervised_loss", supervised_loss),
                 ("unsupervised_loss", unsupervised_loss),
+                # ("l2_reg_loss", l2_reg_loss),
+                ("bce_loss_0", bce_loss_0),
+                ("bce_loss_1", bce_loss_1),
                 ("consistency_loss", consistency_loss),
                 ("confidence_loss", confidence_loss),
             ]
@@ -122,92 +140,137 @@ class ContrastPairClassifier(nn.Module):
 
     def train_model(
         self,
-        x_pos1: torch.Tensor,
-        x_neg1: torch.Tensor,
-        y1: torch.Tensor,
-        x_pos2: torch.Tensor,
-        x_neg2: torch.Tensor,
+        sup_x0: torch.Tensor,
+        sup_x1: torch.Tensor,
+        sup_y: torch.Tensor,
+        unsup_x0: torch.Tensor,
+        unsup_x1: torch.Tensor,
         n_epochs=1000,
         lr=1e-2,
         unsup_weight=1.0,
-    ) -> List[OrderedDict]:
-        optimizer = optim.Adam(self.parameters(), lr=lr)
-        loss_history = []
+        sup_weight=1.0,
+        logger=None,
+    ) -> dict[str, list[float]]:
+        optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=0)
+        # optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=0)
+        # optimizer = optim.LBFGS(self.parameters(), lr=lr, tolerance_change=1e-4)
+        history = defaultdict(list)
         self.train()
 
         for epoch in range(n_epochs):
             optimizer.zero_grad()
             losses = self.compute_loss(
-                x_pos1, x_neg1, y1, x_pos2, x_neg2, unsup_weight
+                sup_x0,
+                sup_x1,
+                sup_y,
+                unsup_x0,
+                unsup_x1,
+                unsup_weight=unsup_weight,
+                sup_weight=sup_weight,
             )
             losses["total_loss"].backward()
             optimizer.step()
 
-            if self.verbose and (epoch + 1) % 100 == 0:
-                print(
+            if self.verbose and (epoch + 1) % 100 == 0 and logger is not None:
+                logger.info(
                     f"Epoch {epoch+1}/{n_epochs}, Loss: {losses['total_loss'].item()}"
                 )
 
-            loss_history.append(losses)
+            for key, loss in losses.items():
+                history[key].append(loss.item())
 
-        return loss_history
+            history["weight_norm"].append(self.linear.weight.norm().item())
+            if self.include_bias:
+                history["bias"].append(self.linear.bias.item())
+
+        return history
 
     def evaluate_accuracy(
-        self, x_pos: torch.Tensor, x_neg: torch.Tensor, y: torch.Tensor
-    ) -> float:
+        self, x0: torch.Tensor, x1: torch.Tensor, y: torch.Tensor
+    ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Evaluate the accuracy of the classifier on the given data.
+
+        Args:
+            x0: Class 0 contrast pair examples.
+            x1: Class 1 contrast pair examples.
+            y: Labels.
+
+        Returns:
+            accuracy: The accuracy of the classifier.
+            p0: The predicted probabilities for the class 0 examples.
+            p1: The predicted probabilities for the class 1 examples.
+            probs: The predicted probabilities.
+        """
         with torch.no_grad():
             self.eval()
-            p_pos = self.predict(x_pos)
-            p_neg = self.predict(x_neg)
-            predictions = ((p_pos + 1 - p_neg) / 2).float()
-            y = y.to(self.device).float().view(-1)
+            p0 = self.predict(x0)  # [N, 1]
+            p1 = self.predict(x1)  # [N, 1]
+            probs = ((p1 + 1 - p0) / 2).float()  # [N, 1]
+            predictions = (probs >= 0.5).float().squeeze(-1)  # [N]
+            y = y.to(self.device).float().view(-1)  # [N, 1]
             accuracy = (predictions == y).float().mean().item()
-        return accuracy
+
+        return accuracy, p0, p1, probs
 
 
 def fit(
-    x_pos1,
-    x_neg1,
-    y1,
-    x_pos2,
-    x_neg2,
-    y2,
+    sup_x0,
+    sup_x1,
+    sup_y,
+    unsup_x0,
+    unsup_x1,
+    unsup_y,
     n_tries=10,
     n_epochs=1000,
     lr=1e-2,
     unsup_weight=1.0,
+    sup_weight=1.0,
     verbose=False,
     device="cuda",
+    logger=None,
 ):
     best_loss = {"total_loss": float("inf")}
     best_probe = None
     all_probes = []
-    all_losses = []
-    all_accuracies1 = []
-    all_accuracies2 = []
+    final_losses = []
+    histories = []
+    sup_accuracies = []
+    unsup_accuracies = []
 
-    x_pos1 = torch.tensor(x_pos1, dtype=torch.float, device=device)
-    x_neg1 = torch.tensor(x_neg1, dtype=torch.float, device=device)
-    y1 = torch.tensor(y1, dtype=torch.float, device=device).view(-1, 1)
-    x_pos2 = torch.tensor(x_pos2, dtype=torch.float, device=device)
-    x_neg2 = torch.tensor(x_neg2, dtype=torch.float, device=device)
-    y2 = torch.tensor(y2, dtype=torch.float, device=device).view(-1, 1)
+    sup_x0 = torch.tensor(sup_x0, dtype=torch.float, device=device)
+    sup_x1 = torch.tensor(sup_x1, dtype=torch.float, device=device)
+    sup_y = torch.tensor(sup_y, dtype=torch.float, device=device).view(-1, 1)
+    unsup_x0 = torch.tensor(unsup_x0, dtype=torch.float, device=device)
+    unsup_x1 = torch.tensor(unsup_x1, dtype=torch.float, device=device)
+    unsup_y = torch.tensor(unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
 
     for _ in range(n_tries):
         classifier = ContrastPairClassifier(
-            input_dim=x_pos1.shape[1], device=device, verbose=verbose
+            input_dim=sup_x1.shape[1], device=device, verbose=verbose
         )
-        loss_history = classifier.train_model(
-            x_pos1, x_neg1, y1, x_pos2, x_neg2, n_epochs, lr, unsup_weight
+        history = classifier.train_model(
+            sup_x0,
+            sup_x1,
+            sup_y,
+            unsup_x0,
+            unsup_x1,
+            n_epochs,
+            lr,
+            unsup_weight=unsup_weight,
+            sup_weight=sup_weight,
+            logger=logger,
         )
-        final_loss = {k: loss.item() for k, loss in loss_history[-1].items()}
-        accuracy1 = classifier.evaluate_accuracy(x_pos1, x_neg1, y1)
-        accuracy2 = classifier.evaluate_accuracy(x_pos2, x_neg2, y2)
+        final_loss = {k: losses[-1] for k, losses in history.items()}
+        sup_acc = classifier.evaluate_accuracy(sup_x0, sup_x1, sup_y)[0]
+        unsup_acc = classifier.evaluate_accuracy(unsup_x0, unsup_x1, unsup_y)[0]
 
         all_probes.append(classifier)
-        all_losses.append(final_loss)
-        all_accuracies1.append(accuracy1)
-        all_accuracies2.append(accuracy2)
+        histories.append(history)
+        final_losses.append(final_loss)
+        sup_accuracies.append(sup_acc)
+        unsup_accuracies.append(unsup_acc)
 
         if final_loss["total_loss"] < best_loss["total_loss"]:
             best_loss = final_loss
@@ -216,13 +279,110 @@ def fit(
     return {
         "best_probe": best_probe,
         "best_loss": best_loss,
-        "best_accuracy1": max(all_accuracies1),
-        "best_accuracy2": max(all_accuracies2),
+        "best_sup_acc": max(sup_accuracies),
+        "best_unsup_acc": max(unsup_accuracies),
         "all_probes": all_probes,
-        "all_losses": all_losses,
-        "all_accuracies1": all_accuracies1,
-        "all_accuracies2": all_accuracies2,
+        "final_losses": final_losses,
+        "histories": histories,
+        "sup_accuracies": sup_accuracies,
+        "unsup_accuracies": unsup_accuracies,
     }
+
+
+def make_contrast_pair_data(
+    target_dict: PromptIndicesDictType,
+    data_dict: DataDictType,
+    permutation_dict: PermutationDictType,
+    projection_model: myReduction,
+    split: str,
+    project_along_mean_diff=False,
+    split_pair: bool = True,
+) -> tuple[Union[tuple[np.ndarray, np.ndarray], np.ndarray], np.ndarray]:
+    x_pair, y = getPair(
+        target_dict=target_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split=split,
+    )
+    assert len(x_pair.shape) == 2
+    if project_along_mean_diff:
+        x_pair = project_data_along_axis(x_pair, y)
+
+    if split_pair:
+        if x_pair.shape[1] % 2 != 0:
+            raise ValueError(
+                "Expected the same number of hidden states for "
+                "class '0' and class '1' to be concatenated, got "
+                f"{x_pair.shape[1]} total features, which is odd."
+            )
+        # Hidden states are concatenated, first class 0 then class 1.
+        x0 = x_pair[:, : x_pair.shape[1] // 2]
+        x1 = x_pair[:, x_pair.shape[1] // 2 :]
+        x = (x0, x1)
+    else:
+        x = x_pair
+
+    return x, y
+
+
+def train_ccs_lr(
+    data_dict: DataDictType,
+    permutation_dict: PermutationDictType,
+    unlabeled_train_data_dict: PromptIndicesDictType,
+    labeled_train_data_dict: PromptIndicesDictType,
+    projection_model: myReduction,
+    train_kwargs={},
+    project_along_mean_diff=False,
+    logger=None,
+) -> tuple[ContrastPairClassifier, dict]:
+    split = "train"
+
+    # Labeled data.
+    (sup_x0, sup_x1), sup_y = make_contrast_pair_data(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split=split,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    # Unlabeled data.
+    (unsup_x0, unsup_x1), unsup_y = make_contrast_pair_data(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split=split,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+
+    train_kwargs_names = [
+        "n_tries",
+        "n_epochs",
+        "lr",
+        "unsup_weight",
+        "sup_weight",
+    ]
+    train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+    }
+
+    # Train the model.
+    fit_result = fit(
+        sup_x0,
+        sup_x1,
+        sup_y,
+        unsup_x0,
+        unsup_x1,
+        unsup_y,
+        verbose=True,
+        logger=logger,
+        **train_kwargs,
+    )
+    classify_model = fit_result["best_probe"]
+
+    return classify_model, fit_result
 
 
 # class ContrastPairClassifier(ABC):

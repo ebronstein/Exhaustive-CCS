@@ -7,20 +7,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import umap
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 
-from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
+from utils.types import DataDictType, Mode, PermutationDictType, PromptIndicesDictType
 from utils_extraction import load_utils, metrics
 from utils_extraction.classifier import (
     assert_close_to_orthonormal,
-    fit,
+    make_contrast_pair_data,
     normalize,
     project_coeff,
     project_data_along_axis,
+    train_ccs_lr,
 )
+from utils_extraction.data_utils import getConcat, getPair
+from utils_extraction.logistic_reg import LogisticRegressionClassifier
+from utils_extraction.projection import IdentityReduction, myReduction
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
@@ -30,84 +32,6 @@ EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR"]
 
 def is_method_unsupervised(method):
     return method in UNSUPERVISED_METHODS or method.startswith("RCCS")
-
-
-class IdentityReduction:
-
-    def fit(self, data):
-        pass
-
-    def transform(self, data):
-        return data
-
-
-class myReduction:
-    def __init__(
-        self, method, n_components, print_more=False, svd_solver="full"
-    ) -> None:
-        self.n_components = n_components
-        self.method = method
-        assert method in ["PCA", "UMAP"], NotImplementedError(
-            "Only support PCA and UMAP to project data."
-        )
-        self.print_more = print_more
-        self.num_feature = None
-        if n_components != -1:
-            if self.method == "PCA":
-                self.model = PCA(
-                    n_components=n_components, svd_solver=svd_solver
-                )
-            elif self.method == "UMAP":
-                self.model = umap.UMAP(n_components=n_components)
-
-    def fit(self, data):
-        self.num_feature = data.shape[1]
-        if self.n_components == -1:
-            if self.print_more:
-                print("n_components = -1, will return identity")
-
-        else:
-            if (
-                self.method == "UMAP"
-            ):  # for UMAP, explicitly centralize the data
-                data = data - np.mean(data, axis=0)
-            self.model.fit(data)
-            if self.method == "PCA":  # for PCA, explicitly set mean to None
-                self.model.mean_ = None
-                if self.print_more:
-                    print("Set the mean of PCA model to `None`.")
-            if self.print_more:
-                if self.method == "PCA":
-                    print(
-                        "PCA fit data. dim = {} and #data = {}, var is {}".format(
-                            self.n_components,
-                            data.shape,
-                            sum(self.model.explained_variance_ratio_),
-                        )
-                    )
-                else:
-                    print(
-                        "UMAP fit data. dim = {} and #data = {}.".format(
-                            self.n_components, data.shape
-                        )
-                    )
-
-    def getDirection(self):
-        # return the component with shape (n_components, n_features)
-        if self.n_components == -1:
-            return np.eye(self.num_feature)
-        else:
-            return self.model.components_
-
-    def transform(self, data):
-        if self.n_components == -1:
-            return data
-        return self.model.transform(data)
-
-    def __getattr__(self, __name):
-        if __name == "n_components":
-            return self.n_components
-        return getattr(self.model, __name)
 
 
 def getSingleLoss(x, verbose=False):
@@ -368,32 +292,32 @@ class ConsistencyMethod(object):
     # switch back to 1000 + 10
     def fit(
         self,
-        data: list,
-        label,
+        data: tuple[np.ndarray, np.ndarray],
+        label: np.ndarray,
         nepochs=1000,
-        ntries=10,
+        n_tries=10,
         lr=1e-2,
         init_theta=None,
         device="cuda",
     ):
         """
-        Does ntries attempts at training, with different random initializations
+        Does n_tries attempts at training, with different random initializations
         """
 
         self.nepochs = nepochs
-        self.ntries = ntries
+        self.n_tries = n_tries
         self.lr = lr
 
         self.device = device
 
         self.init_theta = init_theta
         if self.init_theta is not None:
-            self.ntries = 1
+            self.n_tries = 1
 
         if self.verbose:
             print(
-                "String fiting data with Prob. nepochs: {}, ntries: {}, lr: {}".format(
-                    nepochs, ntries, lr
+                "String fiting data with Prob. nepochs: {}, n_tries: {}, lr: {}".format(
+                    nepochs, n_tries, lr
                 )
             )
         # set up the best loss and best theta found so far
@@ -409,7 +333,7 @@ class ConsistencyMethod(object):
         self.y = label.reshape(-1)
         self.d = self.x0.shape[-1]
 
-        for _ in range(self.ntries):
+        for _ in range(self.n_tries):
             # train
             theta_np, loss = self.train()
 
@@ -725,73 +649,13 @@ class myClassifyModel(LogisticRegression):
         return acc, losses, probs, p0, p1
 
 
-def getConcat(data_list, axis=0):
-    sub_list = [w for w in data_list if w is not None]
-    if not sub_list:
-        return None
-    return np.concatenate(sub_list, axis=axis)
-
-
-def getPair(
-    target_dict: PromptIndicesDictType,
-    data_dict: DataDictType,
-    permutation_dict: PermutationDictType,
-    projection_model: myReduction,
-    split: Literal["train", "test"] = "train",
-) -> tuple[np.ndarray, np.ndarray]:
-    """Concatenate the data and labels for the desired split.
-
-    `projection_model` is used to transform the hidden states. This may be a
-    noop (e.g., if `projection_model.n_components` is -1).
-
-    Args:
-        target_dict (dict): Dictionary of prompt indices to use for each
-            dataset. Key is dataset name, each value is a list of prompt
-            indices for which the corresponding data and labels are returned.
-        data_dict (dict): Dictionary of hidden states. Key is dataset name, each
-            value is a list with one element per prompt. Each element is a tuple
-            pair of (hidden_states, labels).
-        permutation_dict (dict): Dictionary of permutations. Key is dataset
-            name, value is a tuple pair containing the train split and test
-            split indices.
-        projection_model (myReduction): Projection model used to transform the
-            hidden states.
-        split (str, optional): The desired split. Defaults to "train".
-    """
-    if split == "train":
-        split_idx = 0
-    elif split == "test":
-        split_idx = 1
-    else:
-        raise ValueError(
-            f"split should be either 'train' or 'test', got '{split}'"
-        )
-
-    lis = []
-    for key, prompt_lis in target_dict.items():
-        # Indices of the desired split for the current dataset.
-        split_indices = permutation_dict[key][split_idx]
-        for idx in prompt_lis:
-            hidden_states = data_dict[key][idx][0][split_indices]
-            labels = data_dict[key][idx][1][split_indices]
-            lis.append(
-                [
-                    projection_model.transform(hidden_states),
-                    labels,
-                ]
-            )
-
-    data, label = getConcat([w[0] for w in lis]), getConcat([w[1] for w in lis])
-
-    return data, label
-
-
 def mainResults(
     data_dict: DataDictType,
-    unlabeled_train_data_dict: PromptIndicesDictType,
+    train_data_dict: PromptIndicesDictType,
     permutation_dict: PermutationDictType,
     test_dict: PromptIndicesDictType,
     projection_dict: PromptIndicesDictType,
+    mode: Mode,
     labeled_train_data_dict: Optional[PromptIndicesDictType] = None,
     projection_method="PCA",
     n_components: int = 2,
@@ -799,7 +663,7 @@ def mainResults(
     prefix=None,
     classification_method="BSS",
     print_more=False,
-    learn_dict={},
+    train_kwargs={},
     save_probs=True,
     test_on_train=False,
     constraints=None,
@@ -816,6 +680,8 @@ def mainResults(
         data_dict (dict): Dictionary of hidden states and labels. Key is dataset
             name, each value is a list with one element per prompt. Each element
             is a tuple pair of (hidden_states, labels).
+        train_data_dict: Dictionary mapping from train dataset names
+            to prompt indices to use.
         permutation_dict (dict): Dictionary of train/test split indices. Key is
             dataset name, value is a tuple pair containing the train split and
             test split indices.
@@ -825,6 +691,7 @@ def mainResults(
         test_dict (dict): Dictionary of test datasets and prompt indices on
             which the method is evaluated. Key is dataset name, each value is a
             list of prompt indices used to do evaluation.
+        mode (str): Hidden states data mode.
         projection_method (str, optional): Projection method. Defaults to "PCA".
         n_components (int, optional): The dimension you want to reduce to. -1 means no
             projection will be implemented. Defaults to 2.
@@ -834,7 +701,8 @@ def mainResults(
         classification_method (str, optional): Classification method. Can be LR, TPC, and
             BSS. Defaults to "BSS".
         print_more (bool, optional): Whether to print more information. Defaults to False.
-        learn_dict (dict, optional): Dictionary for learning. Defaults to {}.
+        learn_dict (dict, optional): Keyword arguments passed to the training
+            function. Defaults to {}.
         save_probs (bool, optional): Whether to save probabilities. Defaults to True.
         test_on_train (bool, optional): If true, will use the train set to test the model.
             Defaults to False.
@@ -889,62 +757,37 @@ def mainResults(
 
     # TODO: standardize fit_result.
     fit_result = None
+    data, labels = make_contrast_pair_data(
+        target_dict=train_data_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="train",
+        project_along_mean_diff=project_along_mean_diff,
+        split_pair=mode == "concat",
+    )
     if classification_method == "CCS":
         classify_model = ConsistencyMethod(
             no_train=no_train, verbose=print_more, constraints=constraints
         )
-        datas, label = getPair(
-            target_dict=unlabeled_train_data_dict,
-            data_dict=data_dict,
-            permutation_dict=permutation_dict,
-            projection_model=projection_model,
-            split="train",
-        )
-        assert len(datas.shape) == 2
-        if project_along_mean_diff:
-            datas = project_data_along_axis(datas, label)
-        data = [
-            datas[:, : datas.shape[1] // 2],
-            datas[:, datas.shape[1] // 2 :],
-        ]
-
-        classify_model.fit(data=data, label=label, **learn_dict)
+        ccs_train_kwargs_names = ["nepochs", "n_tries", "lr", "init_theta"]
+        ccs_train_kwargs = {
+            k: train_kwargs[k]
+            for k in ccs_train_kwargs_names
+            if k in train_kwargs
+        }
+        classify_model.fit(data=data, label=labels, **ccs_train_kwargs)
     elif classification_method == "CCS+LR":
-        if not labeled_train_data_dict:
-            raise ValueError("supervised_data_dict must be non-empty.")
-        # Labeled data.
-        x1_pair, y1 = getPair(
-            target_dict=labeled_train_data_dict,
-            data_dict=data_dict,
-            permutation_dict=permutation_dict,
-            projection_model=projection_model,
-            split="train",
+        classify_model, fit_result = train_ccs_lr(
+            data_dict,
+            permutation_dict,
+            train_data_dict,
+            labeled_train_data_dict,
+            projection_model,
+            train_kwargs=train_kwargs,
+            project_along_mean_diff=project_along_mean_diff,
+            logger=logger,
         )
-        assert len(x1_pair.shape) == 2
-        if project_along_mean_diff:
-            x1_pair = project_data_along_axis(x1_pair, y1)
-        x_pos1 = x1_pair[:, : x1_pair.shape[1] // 2]
-        x_neg1 = x1_pair[:, x1_pair.shape[1] // 2 :]
-        # Unlabeled data.
-        x2_pair, y2 = getPair(
-            target_dict=unlabeled_train_data_dict,
-            data_dict=data_dict,
-            permutation_dict=permutation_dict,
-            projection_model=projection_model,
-            split="train",
-        )
-        assert len(x2_pair.shape) == 2
-        if project_along_mean_diff:
-            x2_pair = project_data_along_axis(x2_pair, y2)
-        x_pos2 = x2_pair[:, : x2_pair.shape[1] // 2]
-        x_neg2 = x2_pair[:, x2_pair.shape[1] // 2 :]
-
-        # Train the model.
-        fit_result = fit(
-            x_pos1, x_neg1, y1, x_pos2, x_neg2, y2, verbose=True, **learn_dict
-        )
-        classify_model = fit_result["best_probe"]
-
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -956,13 +799,11 @@ def mainResults(
                 permutation_dict=permutation_dict,
                 projection_model=projection_model,
             )
-            for key, l in unlabeled_train_data_dict.items()
+            for key, l in train_data_dict.items()
             for idx in l
         ]
 
-        weights = [
-            1 / len(l) for l in unlabeled_train_data_dict.values() for _ in l
-        ]
+        weights = [1 / len(l) for l in train_data_dict.values() for _ in l]
 
         classify_model = myClassifyModel(
             method=classification_method, print_more=print_more
@@ -971,31 +812,29 @@ def mainResults(
             [w[0] for w in lis],
             [w[1] for w in lis],
             weights=weights,
-            **learn_dict,
+            **train_kwargs,
         )
-
+    elif classification_method == "LR":
+        max_iter = 100  # Original: 10000
+        classify_model = LogisticRegressionClassifier(
+            max_iter=max_iter, n_jobs=1, C=0.1
+        )
+        if logger is not None:
+            logger.info(f"Fitting LR model, mode={mode}")
+        classify_model.fit(data, labels, mode)
     else:
         classify_model = myClassifyModel(
             classification_method, print_more=print_more
         )
-        data, labels = getPair(
-            target_dict=unlabeled_train_data_dict,
-            data_dict=data_dict,
-            permutation_dict=permutation_dict,
-            projection_model=projection_model,
-        )
-
-        if project_along_mean_diff:
-            data = project_data_along_axis(data, labels)
-
         classify_model.fit(data, labels)
 
     eval_result = eval(
         data_dict,
-        # Arbitrarily use the unsupervised permut
+        # Arbitrarily use the unsupervised permutation_dict.
         permutation_dict,
         test_dict,
-        projection_dict,
+        mode,
+        projection_dict=projection_dict,
         projection_method=projection_method,
         n_components=n_components,
         classify_model=classify_model,
@@ -1019,6 +858,7 @@ def eval(
     data_dict: DataDictType,
     permutation_dict: PermutationDictType,
     test_dict: PromptIndicesDictType,
+    mode: Mode,
     projection_dict: Optional[PromptIndicesDictType] = None,
     projection_method="PCA",
     n_components: int = -1,
@@ -1074,6 +914,9 @@ def eval(
 
     # Load classification model params.
     if classify_model is None:
+        # TODO
+        if classification_method == "CCS+LR":
+            raise NotImplementedError()
         coef, bias = load_utils.load_params(
             run_dir, classification_method, prefix
         )
@@ -1081,13 +924,17 @@ def eval(
             classify_model = ConsistencyMethod.from_coef_and_bias(
                 coef, bias, verbose=print_more
             )
+        elif classification_method == "LR":
+            classify_model = LogisticRegressionClassifier.from_coef_and_bias(
+                coef, bias=bias
+            )
         else:
             classify_model = myClassifyModel.from_coef_and_bias(
                 classification_method, coef, bias=bias, print_more=print_more
             )
 
     # Evaluate the model on the test sets.
-    res, lss, ece_dict = {}, {}, {}
+    acc_dict, loss_dict, ece_dict = {}, {}, {}
     for dataset, prompt_indices in test_dict.items():
         # Create eval dir if needed.
         if save_probs:
@@ -1095,65 +942,48 @@ def eval(
             if not os.path.exists(eval_dir):
                 os.makedirs(eval_dir)
 
-        res[dataset], lss[dataset], ece_dict[dataset] = [], [], []
+        acc_dict[dataset], loss_dict[dataset], ece_dict[dataset] = [], [], []
         for prompt_idx in prompt_indices:
             # Get the data and labels for the current dataset and prompt.
             dataset_dict = {dataset: [prompt_idx]}
-            data, label = getPair(
+            # Split the hidden states into those for class "0" and class "1"
+            # if the hidden states for x+ and x- are concatenated.
+            split_pair = mode == "concat"
+            data, label = make_contrast_pair_data(
                 target_dict=dataset_dict,
                 data_dict=data_dict,
                 permutation_dict=permutation_dict,
                 projection_model=projection_model,
                 split=("train" if test_on_train else "test"),
+                project_along_mean_diff=project_along_mean_diff,
+                split_pair=split_pair,
             )
-
-            if project_along_mean_diff:
-                data = project_data_along_axis(data, label)
-
-            # Split the hidden states into those for class "0" and class "1".
-            if classification_method == "CCS":
-                if data.shape[1] % 2 != 0:
-                    raise ValueError(
-                        "CCS requires the same number of hidden states for "
-                        "class '0' and class '1' to be concatenated, got "
-                        f"{data.shape[1]} total features, which is odd."
-                    )
-                data = [
-                    data[:, : data.shape[1] // 2],
-                    data[:, data.shape[1] // 2 :],
-                ]
 
             if classification_method == "CCS+LR":
                 device = classify_model.device
-                x_pos = torch.tensor(
-                    data[:, : data.shape[1] // 2], device=device
-                )
-                x_neg = torch.tensor(
-                    data[:, data.shape[1] // 2 :], device=device
-                )
+                x0, x1 = data
+                x0 = torch.tensor(x0, device=device)
+                x1 = torch.tensor(x1, device=device)
                 y = torch.tensor(label, device=device).float().view(-1, 1)
-                acc = classify_model.evaluate_accuracy(x_pos, x_neg, y)
-                # TODO: modularize this since it's already computed in the call to evaluate_accuracy.
+                acc, p0, p1, probs = classify_model.evaluate_accuracy(
+                    x0, x1, y
+                )
+                p0 = p0.float().cpu().numpy().flatten()
+                p1 = p1.float().cpu().numpy().flatten()
+                probs = probs.float().cpu().numpy().flatten()
                 with torch.no_grad():
                     classify_model.eval()
-                    p1 = (
-                        classify_model.predict(x_pos)
-                        .float()
-                        .cpu()
-                        .numpy()
-                        .flatten()
-                    )
-                    p0 = (
-                        classify_model.predict(x_neg)
-                        .float()
-                        .cpu()
-                        .numpy()
-                        .flatten()
-                    )
-                    probs = ((p1 + 1 - p0) / 2)
                     losses = classify_model.compute_loss(
-                        x_pos, x_neg, y, x_pos, x_neg, y
+                        x0,
+                        x1,
+                        y,
+                        x0,
+                        x1,
                     )
+                    losses = {k: loss.item() for k, loss in losses.items()}
+            elif classification_method == "LR":
+                acc, probs, p0, p1 = classify_model.score(data, label, mode)
+                losses = None
             else:
                 acc, losses, probs, p0, p1 = classify_model.score(
                     data, label, get_loss=True, get_probs=True
@@ -1197,11 +1027,11 @@ def eval(
                 ece = None
                 ece_flip = None
 
-            res[dataset].append(acc)
-            lss[dataset].append(losses)
+            acc_dict[dataset].append(acc)
+            loss_dict[dataset].append(losses)
             ece_dict[dataset].append((ece, ece_flip))
 
-    return res, lss, ece_dict, projection_model, classify_model
+    return acc_dict, loss_dict, ece_dict, projection_model, classify_model
 
 
 # print("\
