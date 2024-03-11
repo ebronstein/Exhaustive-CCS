@@ -20,7 +20,6 @@ class LogisticRegressionClassifier(LogisticRegression):
         self.coef_ = coef
 
     def fit(self, data, label, mode: Mode):
-        breakpoint()
         if mode == "concat":
             assert len(data) == 2
             x0, x1 = data
