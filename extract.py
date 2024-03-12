@@ -124,6 +124,7 @@ def sacred_config():
     sup_weight: float = 1.0
     unsup_weight: float = 1.0
     lr: float = 1e-2
+    device: Literal["cuda", "cpu"] = "cuda"
 
     # Saving
     save_dir = "extraction_results"
@@ -456,6 +457,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             test_on_train=_config["test_on_train"],
             project_along_mean_diff=project_along_mean_diff,
             seed=seed,
+            device=_config["device"],
             logger=_log,
         )
         if _config["eval_only"]:

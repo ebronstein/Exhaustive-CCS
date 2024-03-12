@@ -140,50 +140,95 @@ class ContrastPairClassifier(nn.Module):
 
     def train_model(
         self,
-        sup_x0: torch.Tensor,
-        sup_x1: torch.Tensor,
-        sup_y: torch.Tensor,
-        unsup_x0: torch.Tensor,
-        unsup_x1: torch.Tensor,
+        train_sup_x0: torch.Tensor,
+        train_sup_x1: torch.Tensor,
+        train_sup_y: torch.Tensor,
+        train_unsup_x0: torch.Tensor,
+        train_unsup_x1: torch.Tensor,
+        train_unsup_y: torch.Tensor,
+        test_sup_x0: torch.Tensor,
+        test_sup_x1: torch.Tensor,
+        test_sup_y: torch.Tensor,
+        test_unsup_x0: torch.Tensor,
+        test_unsup_x1: torch.Tensor,
+        test_unsup_y: torch.Tensor,
         n_epochs=1000,
         lr=1e-2,
         unsup_weight=1.0,
         sup_weight=1.0,
+        eval_freq: int = 20,
         logger=None,
-    ) -> dict[str, list[float]]:
+    ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
         optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=0)
         # optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=0)
         # optimizer = optim.LBFGS(self.parameters(), lr=lr, tolerance_change=1e-4)
-        history = defaultdict(list)
+        train_history = defaultdict(list)
+        eval_history = defaultdict(list)
         self.train()
 
         for epoch in range(n_epochs):
             optimizer.zero_grad()
-            losses = self.compute_loss(
-                sup_x0,
-                sup_x1,
-                sup_y,
-                unsup_x0,
-                unsup_x1,
+            train_losses = self.compute_loss(
+                train_sup_x0,
+                train_sup_x1,
+                train_sup_y,
+                train_unsup_x0,
+                train_unsup_x1,
                 unsup_weight=unsup_weight,
                 sup_weight=sup_weight,
             )
-            losses["total_loss"].backward()
+            train_losses["total_loss"].backward()
             optimizer.step()
+
+            for key, loss in train_losses.items():
+                train_history[key].append(loss.item())
+
+            # Eval
+            if epoch % eval_freq == 0 or epoch == n_epochs - 1:
+                with torch.no_grad():
+                    self.eval()
+                    test_losses = self.compute_loss(
+                        test_sup_x0,
+                        test_sup_x1,
+                        test_sup_y,
+                        test_unsup_x0,
+                        test_unsup_x1,
+                        unsup_weight=unsup_weight,
+                        sup_weight=sup_weight,
+                    )
+                train_sup_acc = self.evaluate_accuracy(
+                    train_sup_x0, train_sup_x1, train_sup_y
+                )[0]
+                train_unsup_acc = self.evaluate_accuracy(
+                    train_unsup_x0, train_unsup_x1, train_unsup_y
+                )[0]
+                test_sup_acc = self.evaluate_accuracy(
+                    test_sup_x0, test_sup_x1, test_sup_y
+                )[0]
+                test_unsup_acc = self.evaluate_accuracy(
+                    test_unsup_x0, test_unsup_x1, test_unsup_y
+                )[0]
+
+                eval_history["epoch"].append(epoch)
+                eval_history["train_sup_acc"].append(train_sup_acc)
+                eval_history["train_unsup_acc"].append(train_unsup_acc)
+                eval_history["test_sup_acc"].append(test_sup_acc)
+                eval_history["test_unsup_acc"].append(test_unsup_acc)
+                for key, loss in test_losses.items():
+                    eval_history[key].append(loss.item())
 
             if self.verbose and (epoch + 1) % 100 == 0 and logger is not None:
                 logger.info(
-                    f"Epoch {epoch+1}/{n_epochs}, Loss: {losses['total_loss'].item()}"
+                    f"Epoch {epoch+1}/{n_epochs}, Loss: {train_losses['total_loss'].item()}"
                 )
 
-            for key, loss in losses.items():
-                history[key].append(loss.item())
-
-            history["weight_norm"].append(self.linear.weight.norm().item())
+            train_history["weight_norm"].append(
+                self.linear.weight.norm().item()
+            )
             if self.include_bias:
-                history["bias"].append(self.linear.bias.item())
+                train_history["bias"].append(self.linear.bias.item())
 
-        return history
+        return train_history, eval_history
 
     def evaluate_accuracy(
         self, x0: torch.Tensor, x1: torch.Tensor, y: torch.Tensor
@@ -214,12 +259,18 @@ class ContrastPairClassifier(nn.Module):
 
 
 def fit(
-    sup_x0,
-    sup_x1,
-    sup_y,
-    unsup_x0,
-    unsup_x1,
-    unsup_y,
+    train_sup_x0,
+    train_sup_x1,
+    train_sup_y,
+    train_unsup_x0,
+    train_unsup_x1,
+    train_unsup_y,
+    test_sup_x0,
+    test_sup_x1,
+    test_sup_y,
+    test_unsup_x0,
+    test_unsup_x1,
+    test_unsup_y,
     n_tries=10,
     n_epochs=1000,
     lr=1e-2,
@@ -233,44 +284,68 @@ def fit(
     best_probe = None
     all_probes = []
     final_losses = []
-    histories = []
-    sup_accuracies = []
-    unsup_accuracies = []
+    train_histories = []
+    eval_histories = []
 
-    sup_x0 = torch.tensor(sup_x0, dtype=torch.float, device=device)
-    sup_x1 = torch.tensor(sup_x1, dtype=torch.float, device=device)
-    sup_y = torch.tensor(sup_y, dtype=torch.float, device=device).view(-1, 1)
-    unsup_x0 = torch.tensor(unsup_x0, dtype=torch.float, device=device)
-    unsup_x1 = torch.tensor(unsup_x1, dtype=torch.float, device=device)
-    unsup_y = torch.tensor(unsup_y, dtype=torch.float, device=device).view(
-        -1, 1
+    # Convert data to tensors.
+    train_sup_x0 = torch.tensor(train_sup_x0, dtype=torch.float, device=device)
+    train_sup_x1 = torch.tensor(train_sup_x1, dtype=torch.float, device=device)
+    train_sup_y = torch.tensor(
+        train_sup_y, dtype=torch.float, device=device
+    ).view(-1, 1)
+    train_unsup_x0 = torch.tensor(
+        train_unsup_x0, dtype=torch.float, device=device
     )
+    train_unsup_x1 = torch.tensor(
+        train_unsup_x1, dtype=torch.float, device=device
+    )
+    train_unsup_y = torch.tensor(
+        train_unsup_y, dtype=torch.float, device=device
+    ).view(-1, 1)
+    test_sup_x0 = torch.tensor(test_sup_x0, dtype=torch.float, device=device)
+    test_sup_x1 = torch.tensor(test_sup_x1, dtype=torch.float, device=device)
+    test_sup_y = torch.tensor(
+        test_sup_y, dtype=torch.float, device=device
+    ).view(-1, 1)
+    test_unsup_x0 = torch.tensor(
+        test_unsup_x0, dtype=torch.float, device=device
+    )
+    test_unsup_x1 = torch.tensor(
+        test_unsup_x1, dtype=torch.float, device=device
+    )
+    test_unsup_y = torch.tensor(
+        test_unsup_y, dtype=torch.float, device=device
+    ).view(-1, 1)
 
     for _ in range(n_tries):
         classifier = ContrastPairClassifier(
-            input_dim=sup_x1.shape[1], device=device, verbose=verbose
+            input_dim=train_sup_x1.shape[1], device=device, verbose=verbose
         )
-        history = classifier.train_model(
-            sup_x0,
-            sup_x1,
-            sup_y,
-            unsup_x0,
-            unsup_x1,
+        train_history, eval_history = classifier.train_model(
+            train_sup_x0,
+            train_sup_x1,
+            train_sup_y,
+            train_unsup_x0,
+            train_unsup_x1,
+            train_unsup_y,
+            test_sup_x0,
+            test_sup_x1,
+            test_sup_y,
+            test_unsup_x0,
+            test_unsup_x1,
+            test_unsup_y,
             n_epochs,
             lr,
             unsup_weight=unsup_weight,
             sup_weight=sup_weight,
             logger=logger,
         )
-        final_loss = {k: losses[-1] for k, losses in history.items()}
-        sup_acc = classifier.evaluate_accuracy(sup_x0, sup_x1, sup_y)[0]
-        unsup_acc = classifier.evaluate_accuracy(unsup_x0, unsup_x1, unsup_y)[0]
+        final_loss = {k: losses[-1] for k, losses in train_history.items()}
 
         all_probes.append(classifier)
-        histories.append(history)
+        train_histories.append(train_history)
+        eval_histories.append(eval_history)
         final_losses.append(final_loss)
-        sup_accuracies.append(sup_acc)
-        unsup_accuracies.append(unsup_acc)
 
         if final_loss["total_loss"] < best_loss["total_loss"]:
             best_loss = final_loss
@@ -279,13 +354,10 @@ def fit(
     return {
         "best_probe": best_probe,
         "best_loss": best_loss,
-        "best_sup_acc": max(sup_accuracies),
-        "best_unsup_acc": max(unsup_accuracies),
         "all_probes": all_probes,
         "final_losses": final_losses,
-        "histories": histories,
-        "sup_accuracies": sup_accuracies,
-        "unsup_accuracies": unsup_accuracies,
+        "train_histories": train_histories,
+        "eval_histories": eval_histories,
     }
 
 
@@ -337,26 +409,43 @@ def train_ccs_lr(
     projection_model: myReduction,
     train_kwargs={},
     project_along_mean_diff=False,
+    device="cuda",
     logger=None,
 ) -> tuple[ContrastPairClassifier, dict]:
     split = "train"
 
     # Labeled data.
-    (sup_x0, sup_x1), sup_y = make_contrast_pair_data(
+    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict,
         permutation_dict=permutation_dict,
         projection_model=projection_model,
-        split=split,
+        split="train",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="test",
         project_along_mean_diff=project_along_mean_diff,
     )
     # Unlabeled data.
-    (unsup_x0, unsup_x1), unsup_y = make_contrast_pair_data(
+    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict,
         permutation_dict=permutation_dict,
         projection_model=projection_model,
-        split=split,
+        split="train",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict,
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="test",
         project_along_mean_diff=project_along_mean_diff,
     )
 
@@ -373,13 +462,20 @@ def train_ccs_lr(
 
     # Train the model.
     fit_result = fit(
-        sup_x0,
-        sup_x1,
-        sup_y,
-        unsup_x0,
-        unsup_x1,
-        unsup_y,
+        train_sup_x0,
+        train_sup_x1,
+        train_sup_y,
+        train_unsup_x0,
+        train_unsup_x1,
+        train_unsup_y,
+        test_sup_x0,
+        test_sup_x1,
+        test_sup_y,
+        test_unsup_x0,
+        test_unsup_x1,
+        test_unsup_y,
         verbose=True,
+        device=device,
         logger=logger,
         **train_kwargs,
     )

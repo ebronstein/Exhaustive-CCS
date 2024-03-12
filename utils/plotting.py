@@ -4,22 +4,44 @@ import seaborn as sns
 
 
 def plot_accuracy(fit_result, save_path=None):
-    sup_acc_df = pd.DataFrame(
-        fit_result["sup_accuracies"], columns=["accuracy"]
-    )
-    sup_acc_df["dataset"] = "supervised"
+    eval_histories = fit_result["eval_histories"]
+    data = []
 
-    unsup_acc_df = pd.DataFrame(
-        fit_result["unsup_accuracies"], columns=["accuracy"]
-    )
-    unsup_acc_df["dataset"] = "unsupervised"
+    for trial, history in enumerate(eval_histories):
+        epochs = history["epoch"]
+        for split in ["train", "test"]:
+            for acc_dataset in ["sup_acc", "unsup_acc"]:
+                acc_name = f"{split}_{acc_dataset}"
+                acc_list = history[acc_name]
+                for epoch, acc_val in zip(epochs, acc_list):
+                    data.append(
+                        {
+                            "trial": trial,
+                            "split": split,
+                            "type": acc_dataset,
+                            "epoch": epoch,
+                            "accuracy": acc_val,
+                        }
+                    )
+    df = pd.DataFrame(data)
 
-    acc_df = pd.concat([sup_acc_df, unsup_acc_df], ignore_index=True)
+    # Plot
+    fig, axs = plt.subplots(2, 1, figsize=(8, 12))
+    for ax, acc_dataset in zip(axs, ["sup_acc", "unsup_acc"]):
+        sns.lineplot(
+            data=df[df.type == acc_dataset],
+            x="epoch",
+            y="accuracy",
+            style="split",
+            ci="sd",
+            markers=False,
+            dashes=True,
+            ax=ax,
+        )
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(acc_dataset)
 
-    sns.violinplot(x="dataset", y="accuracy", data=acc_df)
-    plt.ylim(0, 1)
-    plt.suptitle("Supervised vs. Unsupervised Train Set Accuracy")
-
+    fig.suptitle("Accuracy on Train and Test Splits")
     plt.tight_layout()
 
     if save_path is None:
@@ -28,18 +50,21 @@ def plot_accuracy(fit_result, save_path=None):
         plt.savefig(save_path)
         plt.close()
 
+    return df
+
 
 def plot_history(
     fit_result, vars_to_plot=None, one_fig=False, save_path=None, logger=None
 ):
-    if not fit_result["histories"] and logger is not None:
-        logger.info("No histories found in fit_result")
+    if not fit_result["train_histories"] and logger is not None:
+        logger.info("No train_histories found in fit_result")
 
     if vars_to_plot is None:
-        vars_to_plot = fit_result["histories"][0].keys()
+        vars_to_plot = fit_result["train_histories"][0].keys()
     else:
         if not all(
-            var_name in fit_result["histories"][0] for var_name in vars_to_plot
+            var_name in fit_result["train_histories"][0]
+            for var_name in vars_to_plot
         ):
             raise ValueError(
                 f"vars_to_plot contains unknown variable names: {vars_to_plot}"
@@ -48,17 +73,26 @@ def plot_history(
     # Prepare the data for plotting
     data = []
     for var_name in vars_to_plot:
-        for trial, history in enumerate(fit_result["histories"]):
-            var_history = history.get(var_name, [])
-            for epoch, value in enumerate(var_history):
-                data.append(
-                    {
-                        "Epoch": epoch,
-                        "Value": value,
-                        "Type": var_name,
-                        "Trial": trial,
-                    }
-                )
+        for split, histories in zip(
+            ["train", "test"],
+            [fit_result["train_histories"], fit_result["eval_histories"]],
+        ):
+            for trial, history in enumerate(histories):
+                var_history = history.get(var_name, [])
+                if "epoch" in history:
+                    epochs = history["epoch"]
+                else:
+                    epochs = range(len(var_history))
+                for epoch, value in zip(epochs, var_history):
+                    data.append(
+                        {
+                            "Epoch": epoch,
+                            "Value": value,
+                            "Type": var_name,
+                            "Trial": trial,
+                            "Split": split,
+                        }
+                    )
 
     df = pd.DataFrame(data)
 
@@ -72,10 +106,10 @@ def plot_history(
             x="Epoch",
             y="Value",
             hue="Type",
-            style="Type",
+            style="Split",
             ci="sd",
             markers=False,
-            dashes=False,
+            dashes=True,
             ax=axs,
         )
         axs.set_title("History with Confidence Interval")
@@ -90,9 +124,10 @@ def plot_history(
                 data=df[df["Type"] == var_name],
                 x="Epoch",
                 y="Value",
+                style="Split",
                 ci="sd",
                 markers=False,
-                dashes=False,
+                dashes=True,
                 ax=ax,
             )
             ax.set_title(f"{var_name} History")

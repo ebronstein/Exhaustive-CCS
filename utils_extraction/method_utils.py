@@ -668,6 +668,7 @@ def mainResults(
     test_on_train=False,
     constraints=None,
     project_along_mean_diff=False,
+    device="cuda",
     run_dir: Optional[str] = None,
     seed: Optional[str] = None,
     run_id: Optional[str] = None,
@@ -786,6 +787,7 @@ def mainResults(
             projection_model,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
+            device=device,
             logger=logger,
         )
     elif classification_method == "BSS":
