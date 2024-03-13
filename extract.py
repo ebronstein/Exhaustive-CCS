@@ -61,13 +61,13 @@ PrefixType = Literal[
     "normal-bananashed",
 ]
 
-MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR"]
+MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"]
 
 ex = Experiment()
 
 
 def methodHasLoss(method):
-    return method in ["BSS", "CCS", "CCS+LR"] or method.startswith("RCCS")
+    return method in ["BSS", "CCS", "CCS+LR", "CCS-in-LR-span"] or method.startswith("RCCS")
 
 
 def get_method_str(method: str) -> str:
@@ -81,7 +81,7 @@ def get_project_along_mean_diff(
 
 
 def method_uses_concat_hs_mode(method: str) -> bool:
-    return (method in ("CCS", "CCS+LR", "Random")) or method.startswith("RCCS")
+    return (method in ("CCS", "CCS+LR", "CCS-in-LR-span", "Random")) or method.startswith("RCCS")
 
 
 def default_method_mode(method: str) -> str:
@@ -124,6 +124,7 @@ def sacred_config():
     sup_weight: float = 1.0
     unsup_weight: float = 1.0
     lr: float = 1e-2
+    num_orthogonal_dirs: int = 4
     device: Literal["cuda", "cpu"] = "cuda"
 
     # Saving
@@ -438,6 +439,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             sup_weight=_config["sup_weight"],
             unsup_weight=_config["unsup_weight"],
             lr=_config["lr"],
+            num_orthogonal_dirs=_config["num_orthogonal_dirs"],
         )
         kwargs = dict(
             data_dict=data_dict,
@@ -537,6 +539,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             # TODO: save CSS+LR using torch.save.
             elif method == "CSS+LR":
                 raise NotImplementedError()
+            elif method == "CCS-in-LR-span":
+                raise NotImplementedError()
             else:
                 assert False
 
@@ -554,7 +558,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         # TODO: standardize losses
         # Mean losses over all eval datasets and all prompts.
-        if method == "CCS+LR":
+        if method in ["CCS+LR", "CCS-in-LR-span"]:
             loss_names = list(loss_dict[list(loss_dict.keys())[0]][0].keys())
             mean_losses = {}
             for loss_name in loss_names:
@@ -626,7 +630,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if not loss_dict:
                     continue
 
-                if method == "CCS+LR":
+                if method in ["CCS+LR", "CCS-in-LR-span"]:
                     for loss_name, loss in loss_dict[test_set][
                         prompt_idx
                     ].items():

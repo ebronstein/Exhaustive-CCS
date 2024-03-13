@@ -17,7 +17,7 @@ from utils_extraction.classifier import (
     make_contrast_pair_data,
     normalize,
     project_coeff,
-    project_data_along_axis,
+    train_ccs_in_lr_span,
     train_ccs_lr,
 )
 from utils_extraction.data_utils import getConcat, getPair
@@ -27,7 +27,7 @@ from utils_extraction.projection import IdentityReduction, myReduction
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
 
-EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR"]
+EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"]
 
 
 def is_method_unsupervised(method):
@@ -731,8 +731,8 @@ def mainResults(
     if classification_method == "Random":
         no_train = True
         classification_method = "CCS"
-    if classification_method != "CCS" and constraints is not None:
-        raise ValueError("constraints only supported for CCS")
+    if classification_method not in ["CCS", "CCS+LR", "CCS-in-LR-span"] and constraints is not None:
+        raise ValueError("constraints only supported for CCS-based methods.")
 
     # Concatenate all the data (not split) to do PCA.
     # Shape: [num_total_samples, num_features]. If there is a constant number of
@@ -785,6 +785,23 @@ def mainResults(
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
+            train_kwargs=train_kwargs,
+            project_along_mean_diff=project_along_mean_diff,
+            device=device,
+            logger=logger,
+        )
+    elif classification_method == "CCS-in-LR-span":
+        if "num_orthogonal_dirs" not in train_kwargs:
+            raise ValueError("num_orthogonal_dirs required for 'CCS-in-LR-span method.")
+        num_orthogonal_dirs = train_kwargs.pop("num_orthogonal_dirs")
+
+        classify_model, fit_result = train_ccs_in_lr_span(
+            data_dict,
+            permutation_dict,
+            train_data_dict,
+            labeled_train_data_dict,
+            projection_model,
+            num_orthogonal_dirs,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
@@ -961,7 +978,7 @@ def eval(
                 split_pair=split_pair,
             )
 
-            if classification_method == "CCS+LR":
+            if classification_method in ["CCS+LR", "CCS-in-LR-span"]:
                 device = classify_model.device
                 x0, x1 = data
                 x0 = torch.tensor(x0, device=device)
