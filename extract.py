@@ -104,7 +104,10 @@ def sacred_config():
     # supervised learning. The method must support the combination of the two.
     # Set to "burns" to use all the Burns datasets.
     labeled_datasets: Union[str, list[str]] = []
+    # Prefix to use for training.
     prefix: PrefixType = "normal"
+    # Prefix to use for evaluation.
+    test_prefix: PrefixType = "normal"
     data_num: int = 1000
     mode: Literal["auto", "minus", "concat"] = "auto"
     load_dir = "generation_results"
@@ -124,8 +127,15 @@ def sacred_config():
     sup_weight: float = 1.0
     unsup_weight: float = 1.0
     lr: float = 1e-2
+    opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_dirs: int = 4
     device: Literal["cuda", "cpu"] = "cuda"
+    # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
+    log_reg = {
+        "penalty": "l2",
+        "C": 0.1,
+        "max_iter": 10_000,
+    }
 
     # Saving
     save_dir = "extraction_results"
@@ -439,7 +449,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             sup_weight=_config["sup_weight"],
             unsup_weight=_config["unsup_weight"],
             lr=_config["lr"],
+            opt=_config["opt"],
             num_orthogonal_dirs=_config["num_orthogonal_dirs"],
+            log_reg=_config["log_reg"],
         )
         kwargs = dict(
             data_dict=data_dict,

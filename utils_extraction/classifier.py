@@ -238,12 +238,17 @@ class ContrastPairClassifier(nn.Module):
         lr=1e-2,
         unsup_weight=1.0,
         sup_weight=1.0,
+        opt: str = "sgd",
         eval_freq: int = 20,
         logger=None,
     ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
-        optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=0)
-        # optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=0)
-        # optimizer = optim.LBFGS(self.parameters(), lr=lr, tolerance_change=1e-4)
+        if opt == "sgd":
+            optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=0)
+        elif opt == "adam":
+            optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=0)
+        else:
+            raise ValueError(f"Unknown optimizer: {opt}")
+
         train_history = defaultdict(list)
         eval_history = defaultdict(list)
         self.train()
@@ -364,6 +369,7 @@ def fit(
     lr=1e-2,
     unsup_weight=1.0,
     sup_weight=1.0,
+    opt: str = "sgd",
     include_bias: bool = True,
     verbose=False,
     device="cuda",
@@ -432,6 +438,7 @@ def fit(
             lr,
             unsup_weight=unsup_weight,
             sup_weight=sup_weight,
+            opt=opt,
             logger=logger,
         )
         final_loss = {k: losses[-1] for k, losses in train_history.items()}
@@ -547,6 +554,7 @@ def train_ccs_lr(
         "lr",
         "unsup_weight",
         "sup_weight",
+        "opt",
     ]
     train_kwargs = {
         k: v for k, v in train_kwargs.items() if k in train_kwargs_names
@@ -627,6 +635,7 @@ def train_ccs_in_lr_span(
         "n_tries",
         "n_epochs",
         "lr",
+        "opt",
     ]
     train_kwargs = {
         k: v for k, v in train_kwargs.items() if k in train_kwargs_names
