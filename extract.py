@@ -417,6 +417,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             if _config["eval_only"]
             else set(train_datasets + labeled_train_datasets)
         )
+        # Arbitrarily use prefix instead of test_prefix to index into data_dict
+        # since the number of prompts should be the same for both.
         projection_dict = {
             ds: list(range(len(data_dict[prefix][ds])))
             for ds in projection_datasets

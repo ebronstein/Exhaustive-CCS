@@ -9,7 +9,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from utils.types import DataDictType, PermutationDictType, PromptIndicesDictType
+from utils.types import (
+    DataDictType,
+    PermutationDictType,
+    PrefixDataDictType,
+    PromptIndicesDictType,
+)
 from utils_extraction.data_utils import getPair
 from utils_extraction.projection import myReduction
 
@@ -503,11 +508,13 @@ def make_contrast_pair_data(
 
 
 def train_ccs_lr(
-    data_dict: DataDictType,
+    data_dict: PrefixDataDictType,
     permutation_dict: PermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
+    labeled_prefix: str,
+    unlabeled_prefix: str,
     train_kwargs={},
     project_along_mean_diff=False,
     device="cuda",
@@ -516,7 +523,7 @@ def train_ccs_lr(
     # Labeled data.
     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[labeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="train",
@@ -524,7 +531,7 @@ def train_ccs_lr(
     )
     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[labeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="test",
@@ -533,7 +540,7 @@ def train_ccs_lr(
     # Unlabeled data.
     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[unlabeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="train",
@@ -541,7 +548,7 @@ def train_ccs_lr(
     )
     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[unlabeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="test",
@@ -585,11 +592,13 @@ def train_ccs_lr(
 
 
 def train_ccs_in_lr_span(
-    data_dict: DataDictType,
+    data_dict: PrefixDataDictType,
     permutation_dict: PermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
+    labeled_prefix: str,
+    unlabeled_prefix: str,
     num_orthogonal_dirs: int,
     train_kwargs={},
     project_along_mean_diff=False,
@@ -599,7 +608,7 @@ def train_ccs_in_lr_span(
     # Labeled data.
     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[labeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="train",
@@ -607,7 +616,7 @@ def train_ccs_in_lr_span(
     )
     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[labeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="test",
@@ -616,7 +625,7 @@ def train_ccs_in_lr_span(
     # Unlabeled data.
     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[unlabeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="train",
@@ -624,7 +633,7 @@ def train_ccs_in_lr_span(
     )
     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict,
+        data_dict=data_dict[unlabeled_prefix],
         permutation_dict=permutation_dict,
         projection_model=projection_model,
         split="test",
@@ -644,7 +653,7 @@ def train_ccs_in_lr_span(
     lr_train_kwargs.update({"sup_weight": 1.0, "unsup_weight": 0.0})
 
     orthogonal_dirs = None
-
+    lr_fit_results = []
     for i in range(num_orthogonal_dirs):
         logger.info(f"Finding {i}-th direction.")
         fit_result = fit(
@@ -678,9 +687,14 @@ def train_ccs_in_lr_span(
         else:
             orthogonal_dirs = np.hstack([orthogonal_dirs, new_orthogonal_dir])
 
+        # Remove elements that are not JSON-serializable.
+        del fit_result["best_probe"]
+        del fit_result["all_probes"]
+        lr_fit_results.append(fit_result)
+
     ccs_train_kwargs = copy(train_kwargs)
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-    fit_result = fit(
+    final_fit_result = fit(
         train_sup_x0,
         train_sup_x1,
         train_sup_y,
@@ -700,10 +714,12 @@ def train_ccs_in_lr_span(
         logger=logger,
         **ccs_train_kwargs,
     )
+    final_fit_result["lr_fit_results"] = lr_fit_results
+    final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
 
-    classify_model = fit_result["best_probe"]
+    classify_model = final_fit_result["best_probe"]
 
-    return classify_model, fit_result
+    return classify_model, final_fit_result
 
 
 # class ContrastPairClassifier(ABC):

@@ -691,8 +691,8 @@ def mainResults(
             dataset and prefix combination. First key is dataset name, second
             key is prefix. Each value is a list with one element per prompt.
             Each element is a tuple pair of (hidden_states, labels).
-        train_data_dict: Dictionary mapping from train dataset names
-            to prompt indices to use.
+        train_data_dict: Dictionary mapping from train dataset names to prompt
+            indices to use for the main train datasets.
         permutation_dict (dict): Dictionary of train/test split indices. Key is
             dataset name, value is a tuple pair containing the train split and
             test split indices.
@@ -705,6 +705,8 @@ def mainResults(
         mode (str): Hidden states data mode.
         train_prefix (str): Prefix for train data.
         test_prefix (str): Prefix for test data.
+        labeled_train_data_dict (dict, optional): Dictionary mapping from
+            labeled train dataset names to prompt indices to use.
         projection_method (str, optional): Projection method. Defaults to "PCA".
         n_components (int, optional): The dimension you want to reduce to. -1 means no
             projection will be implemented. Defaults to 2.
@@ -753,6 +755,8 @@ def mainResults(
     train_prefix_data_dict = data_dict[train_prefix]
     test_prefix_data_dict = data_dict[test_prefix]
 
+    # TODO: should the projection be fit to the train prefix, test prefix, or
+    # both?
     # Concatenate all the data (not split) to do PCA.
     # Shape: [num_total_samples, num_features]. If there is a constant number of
     # prompts per dataset, num_total_samples = num_datasets * num_prompts
@@ -777,16 +781,17 @@ def mainResults(
 
     # TODO: standardize fit_result.
     fit_result = None
-    data, labels = make_contrast_pair_data(
-        target_dict=train_data_dict,
-        data_dict=train_prefix_data_dict,
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="train",
-        project_along_mean_diff=project_along_mean_diff,
-        split_pair=mode == "concat",
-    )
     if classification_method == "CCS":
+        data, labels = make_contrast_pair_data(
+            target_dict=train_data_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+            project_along_mean_diff=project_along_mean_diff,
+            split_pair=mode == "concat",
+        )
+
         classify_model = ConsistencyMethod(
             no_train=no_train, verbose=print_more, constraints=constraints
         )
@@ -798,12 +803,16 @@ def mainResults(
         }
         classify_model.fit(data=data, label=labels, **ccs_train_kwargs)
     elif classification_method == "CCS+LR":
+        # Use train_prefix for the labeled data and test_prefix for the
+        # unlabeled data.
         classify_model, fit_result = train_ccs_lr(
-            train_prefix_data_dict,
+            data_dict,
             permutation_dict,
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
+            train_prefix,
+            test_prefix,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
@@ -816,12 +825,16 @@ def mainResults(
             )
         num_orthogonal_dirs = train_kwargs.pop("num_orthogonal_dirs")
 
+        # Use train_prefix for the labeled data and test_prefix for the
+        # unlabeled data.
         classify_model, fit_result = train_ccs_in_lr_span(
             train_prefix_data_dict,
             permutation_dict,
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
+            train_prefix,
+            test_prefix,
             num_orthogonal_dirs,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
@@ -855,6 +868,16 @@ def mainResults(
             **train_kwargs,
         )
     elif classification_method == "LR":
+        data, labels = make_contrast_pair_data(
+            target_dict=train_data_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+            project_along_mean_diff=project_along_mean_diff,
+            split_pair=mode == "concat",
+        )
+
         lr_train_kwargs = train_kwargs["log_reg"]
         classify_model = LogisticRegressionClassifier(
             n_jobs=1, **lr_train_kwargs
@@ -863,6 +886,16 @@ def mainResults(
             logger.info(f"Fitting LR model, mode={mode}")
         classify_model.fit(data, labels, mode)
     else:
+        data, labels = make_contrast_pair_data(
+            target_dict=train_data_dict,
+            data_dict=data_dict,
+            permutation_dict=permutation_dict,
+            projection_model=projection_model,
+            split="train",
+            project_along_mean_diff=project_along_mean_diff,
+            split_pair=mode == "concat",
+        )
+
         classify_model = myClassifyModel(
             classification_method, print_more=print_more
         )
