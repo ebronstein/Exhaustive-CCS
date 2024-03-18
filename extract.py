@@ -61,13 +61,20 @@ PrefixType = Literal[
     "normal-bananashed",
 ]
 
-MethodType = Literal["0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"]
+MethodType = Literal[
+    "0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"
+]
 
 ex = Experiment()
 
 
 def methodHasLoss(method):
-    return method in ["BSS", "CCS", "CCS+LR", "CCS-in-LR-span"] or method.startswith("RCCS")
+    return method in [
+        "BSS",
+        "CCS",
+        "CCS+LR",
+        "CCS-in-LR-span",
+    ] or method.startswith("RCCS")
 
 
 def get_method_str(method: str) -> str:
@@ -218,6 +225,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     labeled_train_datasets = _config["labeled_datasets"]
     eval_datasets = _config["eval_datasets"]
     prefix = _config["prefix"]
+    test_prefix = _config["test_prefix"]
 
     run_id = _run._id
     run_dir = os.path.join(exp_dir, run_id)
@@ -261,8 +269,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
     model_short_name = file_utils.get_model_short_name(model)
     _log.info(
-        "---------------- model = %s, prefix = %s ----------------"
-        % (model_short_name, prefix)
+        "---------------- model = %s, prefix = %s, test_prefix - %s ----------------"
+        % (model_short_name, prefix, test_prefix)
     )
 
     # TODO: look into how zero-shot results are being saved.
@@ -339,6 +347,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     eval_results = collections.defaultdict(list)
 
     # Generate data.
+    prefixes = set([prefix, test_prefix])
     mode_to_data = {}
     for method in _config["method_list"]:
         if method == "0-shot":
@@ -358,19 +367,21 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         if mode in mode_to_data:
             continue
 
-        # Only generate the data (and other related dictionaries) once to keep
-        # themn the same across methods.
-        data_dict = load_hidden_states_for_datasets(
-            _config["load_dir"],
-            mdl_name=model,
-            dataset_list=datasets_to_load,
-            prefix=prefix,
-            location=_config["location"],
-            layer=_config["layer"],
-            mode=mode,
-            logger=_log,
-        )
-        mode_to_data[mode] = data_dict
+        mode_to_data[mode] = {}
+        for prefix_ in prefixes:
+            # Only generate the data (and other related dictionaries) once to keep
+            # themn the same across methods.
+            data_dict = load_hidden_states_for_datasets(
+                _config["load_dir"],
+                mdl_name=model,
+                dataset_list=datasets_to_load,
+                prefix=prefix_,
+                location=_config["location"],
+                layer=_config["layer"],
+                mode=mode,
+                logger=_log,
+            )
+            mode_to_data[mode][prefix_] = data_dict
 
     for method in _config["method_list"]:
         if method == "0-shot":
@@ -391,9 +402,10 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         data_dict = mode_to_data[mode]
         permutation_dict = {
-            ds: make_permutation_dict(data_dict[ds]) for ds in datasets_to_load
+            ds: make_permutation_dict(data_dict[prefix][ds])
+            for ds in datasets_to_load
         }
-        assert data_dict.keys() == set(datasets_to_load)
+        assert data_dict[prefix].keys() == set(datasets_to_load)
         assert permutation_dict.keys() == set(datasets_to_load)
 
         # TODO: maybe projection should get to use other datasets that are
@@ -406,17 +418,21 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             else set(train_datasets + labeled_train_datasets)
         )
         projection_dict = {
-            key: list(range(len(data_dict[key]))) for key in projection_datasets
+            ds: list(range(len(data_dict[prefix][ds])))
+            for ds in projection_datasets
         }
 
         train_data_dict = {
-            ds: range(len(data_dict[ds])) for ds in train_datasets
+            ds: range(len(data_dict[prefix][ds])) for ds in train_datasets
         }
         labeled_train_data_dict = {
-            ds: range(len(data_dict[ds])) for ds in labeled_train_datasets
+            ds: range(len(data_dict[prefix][ds]))
+            for ds in labeled_train_datasets
         }
 
-        test_dict = {ds: range(len(data_dict[ds])) for ds in eval_datasets}
+        test_dict = {
+            ds: range(len(data_dict[test_prefix][ds])) for ds in eval_datasets
+        }
 
         n_components = 1 if method == "TPC" else -1
 
@@ -454,7 +470,6 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             log_reg=_config["log_reg"],
         )
         kwargs = dict(
-            data_dict=data_dict,
             train_data_dict=train_data_dict,
             permutation_dict=permutation_dict,
             test_dict=test_dict,
@@ -463,7 +478,6 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             labeled_train_data_dict=labeled_train_data_dict,
             projection_method="PCA",
             n_components=n_components,
-            prefix=prefix,
             classification_method=method_,
             train_kwargs=train_kwargs,
             print_more=_config["verbose"],
@@ -481,6 +495,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 prefix,
             )
             eval_kwargs = dict(
+                data_dict=data_dict[test_prefix],
+                train_prefix=prefix,
                 run_dir=load_run_dir,
                 run_id=_config["load_params_run_id"],
                 **kwargs,
@@ -490,6 +506,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             )
         else:
             main_results_kwargs = dict(
+                data_dict=data_dict,
+                train_prefix=prefix,
+                test_prefix=test_prefix,
                 constraints=constraints,
                 run_dir=run_dir,
                 run_id=run_id,
@@ -624,7 +643,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             for prompt_idx in range(len(acc_dict[test_set])):
                 eval_result = {
                     "model": model_short_name,
-                    "prefix": prefix,
+                    "train_prefix": prefix,
+                    "test_prefix": test_prefix,
                     "method": maybe_append_project_suffix(
                         method, project_along_mean_diff
                     ),
