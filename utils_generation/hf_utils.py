@@ -102,9 +102,7 @@ def instantiate_model(
     kwargs["device_map"] = {"": device}
 
     with prevent_name_conflicts():
-        model_cfg = AutoConfig.from_pretrained(
-            model_str, use_auth_token=use_auth_token
-        )
+        model_cfg = AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)
 
         # When the torch_dtype is None, this generally means the model is fp32, because
         # the config was probably created before the `torch_dtype` field was added.
@@ -129,9 +127,7 @@ def instantiate_model(
         # converting them doesn't hurt performance.
         elif fp32_weights and torch.cuda.is_bf16_supported():
             kwargs["torch_dtype"] = torch.bfloat16
-            print(
-                "Weights seem to be fp32, but bf16 is available. Loading in bf16."
-            )
+            print("Weights seem to be fp32, but bf16 is available. Loading in bf16.")
         else:
             kwargs["torch_dtype"] = "auto"
 
@@ -156,16 +152,12 @@ def instantiate_tokenizer(model_str: str, **kwargs) -> PreTrainedTokenizerBase:
     with prevent_name_conflicts():
         tokenizer_cls = get_tokenizer_class(model_str)
         try:
-            return tokenizer_cls.from_pretrained(
-                model_str, use_fast=True, **kwargs
-            )
+            return tokenizer_cls.from_pretrained(model_str, use_fast=True, **kwargs)
         except Exception as e:
             if kwargs.get("verbose", True):
                 print(f"Falling back to slow tokenizer; fast one failed: '{e}'")
 
-            return tokenizer_cls.from_pretrained(
-                model_str, use_fast=False, **kwargs
-            )
+            return tokenizer_cls.from_pretrained(model_str, use_fast=False, **kwargs)
 
 
 def get_model_config(
@@ -175,20 +167,14 @@ def get_model_config(
     return AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)
 
 
-def is_autoregressive(
-    model_cfg: PretrainedConfig, include_enc_dec: bool
-) -> bool:
+def is_autoregressive(model_cfg: PretrainedConfig, include_enc_dec: bool) -> bool:
     """Check if a model config is autoregressive."""
     archs = model_cfg.architectures
     if not isinstance(archs, list):
         return False
 
-    suffixes = (
-        _AUTOREGRESSIVE_SUFFIXES if include_enc_dec else _DECODER_ONLY_SUFFIXES
-    )
-    return any(
-        arch_str.endswith(suffix) for arch_str in archs for suffix in suffixes
-    )
+    suffixes = _AUTOREGRESSIVE_SUFFIXES if include_enc_dec else _DECODER_ONLY_SUFFIXES
+    return any(arch_str.endswith(suffix) for arch_str in archs for suffix in suffixes)
 
 
 def is_decoder_only(
@@ -201,9 +187,10 @@ def is_decoder_only(
         model_cfg = get_model_config(model_str, use_auth_token=use_auth_token)
     # For some reason, t5-11b is appears as a decoder-only architecture even
     # though it's encoder-decoder.
-    return is_autoregressive(
-        model_cfg, include_enc_dec=False
-    ) and model_str not in ["google-t5/t5-11b", "t5-11b"]
+    return is_autoregressive(model_cfg, include_enc_dec=False) and model_str not in [
+        "google-t5/t5-11b",
+        "t5-11b",
+    ]
 
 
 def is_encoder_only(
@@ -217,7 +204,12 @@ def is_encoder_only(
     return not is_autoregressive(model_cfg, include_enc_dec=True)
 
 
-def get_num_hidden_layers(model: str) -> int:
+def get_num_hidden_layers(
+    model: str,
+    use_auth_token: Optional[Union[bool, str]] = None,
+) -> int:
     """Return the number of hidden layers in a model."""
     # Look up the model config to get the number of layers
-    return AutoConfig.from_pretrained(model).num_hidden_layers
+    return AutoConfig.from_pretrained(
+        model, use_auth_token=use_auth_token
+    ).num_hidden_layers
