@@ -11,11 +11,13 @@ import torch.optim as optim
 
 from utils.types import (
     DataDictType,
+    Mode,
     PermutationDictType,
     PrefixDataDictType,
     PromptIndicesDictType,
 )
 from utils_extraction.data_utils import getPair
+from utils_extraction.logistic_reg import LogisticRegressionClassifier
 from utils_extraction.projection import myReduction
 
 Tensor = Union[torch.Tensor, np.ndarray]
@@ -507,6 +509,135 @@ def make_contrast_pair_data(
     return x, y
 
 
+def train_ccs_in_lr_span(
+    data_dict: PrefixDataDictType,
+    permutation_dict: PermutationDictType,
+    unlabeled_train_data_dict: PromptIndicesDictType,
+    labeled_train_data_dict: PromptIndicesDictType,
+    projection_model: myReduction,
+    labeled_prefix: str,
+    unlabeled_prefix: str,
+    num_orthogonal_dirs: int,
+    mode: Mode,
+    train_kwargs={},
+    project_along_mean_diff=False,
+    device="cuda",
+    logger=None,
+) -> tuple[ContrastPairClassifier, dict]:
+    # Labeled data.
+    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict[labeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="train",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict[labeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="test",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    # Unlabeled data.
+    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict[unlabeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="train",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict[unlabeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        split="test",
+        project_along_mean_diff=project_along_mean_diff,
+    )
+
+    train_kwargs_names = [
+        "n_tries",
+        "n_epochs",
+        "lr",
+        "opt",
+    ]
+    train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+    }
+
+    lr_train_kwargs = train_kwargs.pop("log_reg", {})
+    lr_model = LogisticRegressionClassifier(
+        n_jobs=1, **lr_train_kwargs
+    )
+
+    cur_train_sup_x0 = train_sup_x0.copy()
+    cur_train_sup_x1 = train_sup_x1.copy()
+
+    orthogonal_dirs = []
+    lr_fit_results = []
+    for i in range(num_orthogonal_dirs):
+        logger.info(f"Direction {i+1}/{num_orthogonal_dirs}.")
+        breakpoint()
+
+        lr_model.fit((cur_train_sup_x0, cur_train_sup_x1), train_sup_y, mode)
+        orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
+        orth_dir = orth_dir.squeeze(0)
+        orthogonal_dirs.append(orth_dir)
+
+        # Eval
+        fit_result = []
+        fit_result["proj_train_acc"] = lr_model.score((cur_train_sup_x0, cur_train_sup_x1), train_sup_y)
+        fit_result["train_acc"] = lr_model.score((train_sup_x0, train_sup_x1), train_sup_y)
+        fit_result["test_acc"] = lr_model.score((test_sup_x0, test_sup_x1), test_sup_y)
+        lr_fit_results.append(fit_result)
+
+        # Project away the direction.
+        cur_train_sup_x0 -= ((cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir)
+        cur_train_sup_x1 -= ((cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir)
+        assert np.allclose(cur_train_sup_x0 @ orth_dir, 0)
+        assert np.allclose(cur_train_sup_x1 @ orth_dir, 0)
+
+
+    ccs_train_kwargs = copy(train_kwargs)
+    ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
+    final_fit_result = fit(
+        train_sup_x0,
+        train_sup_x1,
+        train_sup_y,
+        train_unsup_x0,
+        train_unsup_x1,
+        train_unsup_y,
+        test_sup_x0,
+        test_sup_x1,
+        test_sup_y,
+        test_unsup_x0,
+        test_unsup_x1,
+        test_unsup_y,
+        span_dirs=orthogonal_dirs,
+        include_bias=False,
+        verbose=True,
+        device=device,
+        logger=logger,
+        **ccs_train_kwargs,
+    )
+    final_fit_result["lr_fit_results"] = lr_fit_results
+    final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
+
+    best_probe = final_fit_result["best_probe"]
+    final_fit_result["best_probe_weight"] = (
+        best_probe.linear.weight.detach().cpu().numpy().tolist()
+    )
+    if best_probe.linear.bias is not None:
+        final_fit_result["best_probe_bias"] = (
+            best_probe.linear.bias.detach().cpu().numpy().tolist()
+        )
+
+    return best_probe, final_fit_result
+
 def train_ccs_lr(
     data_dict: PrefixDataDictType,
     permutation_dict: PermutationDictType,
@@ -591,469 +722,139 @@ def train_ccs_lr(
     return classify_model, fit_result
 
 
-def train_ccs_in_lr_span(
-    data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
-    unlabeled_train_data_dict: PromptIndicesDictType,
-    labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
-    labeled_prefix: str,
-    unlabeled_prefix: str,
-    num_orthogonal_dirs: int,
-    train_kwargs={},
-    project_along_mean_diff=False,
-    device="cuda",
-    logger=None,
-) -> tuple[ContrastPairClassifier, dict]:
-    # Labeled data.
-    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
-        target_dict=labeled_train_data_dict,
-        data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="train",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
-        target_dict=labeled_train_data_dict,
-        data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="test",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    # Unlabeled data.
-    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
-        target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="train",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
-        target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="test",
-        project_along_mean_diff=project_along_mean_diff,
-    )
+# def train_ccs_in_lr_span(
+#     data_dict: PrefixDataDictType,
+#     permutation_dict: PermutationDictType,
+#     unlabeled_train_data_dict: PromptIndicesDictType,
+#     labeled_train_data_dict: PromptIndicesDictType,
+#     projection_model: myReduction,
+#     labeled_prefix: str,
+#     unlabeled_prefix: str,
+#     num_orthogonal_dirs: int,
+#     train_kwargs={},
+#     project_along_mean_diff=False,
+#     device="cuda",
+#     logger=None,
+# ) -> tuple[ContrastPairClassifier, dict]:
+#     # Labeled data.
+#     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
+#         target_dict=labeled_train_data_dict,
+#         data_dict=data_dict[labeled_prefix],
+#         permutation_dict=permutation_dict,
+#         projection_model=projection_model,
+#         split="train",
+#         project_along_mean_diff=project_along_mean_diff,
+#     )
+#     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
+#         target_dict=labeled_train_data_dict,
+#         data_dict=data_dict[labeled_prefix],
+#         permutation_dict=permutation_dict,
+#         projection_model=projection_model,
+#         split="test",
+#         project_along_mean_diff=project_along_mean_diff,
+#     )
+#     # Unlabeled data.
+#     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
+#         target_dict=unlabeled_train_data_dict,
+#         data_dict=data_dict[unlabeled_prefix],
+#         permutation_dict=permutation_dict,
+#         projection_model=projection_model,
+#         split="train",
+#         project_along_mean_diff=project_along_mean_diff,
+#     )
+#     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
+#         target_dict=unlabeled_train_data_dict,
+#         data_dict=data_dict[unlabeled_prefix],
+#         permutation_dict=permutation_dict,
+#         projection_model=projection_model,
+#         split="test",
+#         project_along_mean_diff=project_along_mean_diff,
+#     )
 
-    train_kwargs_names = [
-        "n_tries",
-        "n_epochs",
-        "lr",
-        "opt",
-    ]
-    train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
-    }
-    lr_train_kwargs = copy(train_kwargs)
-    lr_train_kwargs.update({"sup_weight": 1.0, "unsup_weight": 0.0})
+#     train_kwargs_names = [
+#         "n_tries",
+#         "n_epochs",
+#         "lr",
+#         "opt",
+#     ]
+#     train_kwargs = {
+#         k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+#     }
+#     lr_train_kwargs = copy(train_kwargs)
+#     lr_train_kwargs.update({"sup_weight": 1.0, "unsup_weight": 0.0})
 
-    orthogonal_dirs = None
-    lr_fit_results = []
-    for i in range(num_orthogonal_dirs):
-        logger.info(f"Finding {i}-th direction.")
-        fit_result = fit(
-            train_sup_x0,
-            train_sup_x1,
-            train_sup_y,
-            train_unsup_x0,
-            train_unsup_x1,
-            train_unsup_y,
-            test_sup_x0,
-            test_sup_x1,
-            test_sup_y,
-            test_unsup_x0,
-            test_unsup_x1,
-            test_unsup_y,
-            orthogonal_dirs=orthogonal_dirs,
-            include_bias=True,
-            verbose=True,
-            device=device,
-            logger=logger,
-            **lr_train_kwargs,
-        )
-
-        # [input_dim, 1]
-        new_orthogonal_dir = (
-            fit_result["best_probe"].linear.weight.detach().cpu().numpy()
-        ).T
-        new_orthogonal_dir = normalize(new_orthogonal_dir)
-        if orthogonal_dirs is None:
-            orthogonal_dirs = new_orthogonal_dir
-        else:
-            orthogonal_dirs = np.hstack([orthogonal_dirs, new_orthogonal_dir])
-
-        # Remove elements that are not JSON-serializable.
-        del fit_result["best_probe"]
-        del fit_result["all_probes"]
-        lr_fit_results.append(fit_result)
-
-    ccs_train_kwargs = copy(train_kwargs)
-    ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-    final_fit_result = fit(
-        train_sup_x0,
-        train_sup_x1,
-        train_sup_y,
-        train_unsup_x0,
-        train_unsup_x1,
-        train_unsup_y,
-        test_sup_x0,
-        test_sup_x1,
-        test_sup_y,
-        test_unsup_x0,
-        test_unsup_x1,
-        test_unsup_y,
-        span_dirs=orthogonal_dirs,
-        include_bias=False,
-        verbose=True,
-        device=device,
-        logger=logger,
-        **ccs_train_kwargs,
-    )
-    final_fit_result["lr_fit_results"] = lr_fit_results
-    final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
-
-    classify_model = final_fit_result["best_probe"]
-
-    return classify_model, final_fit_result
-
-
-# class ContrastPairClassifier(ABC):
-#     def __init__(
-#         self,
-#         input_dim: int,
-#         verbose=False,
-#         include_bias=True,
-#         no_train=False,
-#         constraints=None,
-#         logger=None,
-#     ):
-#         """Consistency classifier base class.
-
-#         Args:
-#             input_dim: dimension of the input data, not including the bias term.
-#             verbose: whether to be verbose in train
-#             include_bias: whether to include bias in the linear model
-#             no_train: whether to train the linear model (otherwise just return randomly initialized weights)
-#             constraints: an optional matrix of shape (n_directions, n_features)*
-#                 of unnormalized but orthogonal directions which the linear model should be orthogonal to
-#         """
-#         self.input_dim = input_dim
-#         self.theta_dim = input_dim + int(include_bias)
-#         self.include_bias = include_bias
-#         self.verbose = verbose
-#         self.no_train = no_train
-#         self.constraints = constraints
-#         if self.constraints is not None:
-#             self.constraints = normalize(self.constraints)
-#             assert_close_to_orthonormal(self.constraints)
-#         self.logger = logger
-
-#         self.best_theta = None
-#         self.best_loss = None
-
-#     @abstractmethod
-#     def validate_data(
-#         self,
-#         x1: ContrastPairNp,
-#         y1: np.ndarray,
-#         x2: Optional[ContrastPairNp] = None,
-#         y2: Optional[np.ndarray] = None,
-#     ):
-#         pass
-
-#     @classmethod
-#     def from_coef_and_bias(cls, coef, bias=None, **kwargs):
-#         coef = np.asarray(coef)
-#         if coef.ndim == 1:
-#             coef = coef[None, :]
-#         elif coef.ndim > 2:
-#             raise ValueError(
-#                 f"coef should have at most 2 dimensions, found {coef.ndim}"
-#             )
-
-#         if bias is not None:
-#             bias = np.asarray(bias)
-#             if not (np.isscalar(bias) or bias.shape == (1,)):
-#                 raise ValueError(f"bias should be a scalar, found {bias}")
-
-#         kwargs["include_bias"] = bias is not None
-#         kwargs["no_train"] = False
-#         instance = cls(**kwargs)
-
-#         if bias is None:
-#             theta = coef
-#         else:
-#             theta = np.concatenate([coef, bias[:, None]], axis=-1)
-#         instance.best_theta = theta
-#         return instance
-
-#     @property
-#     def coef(self) -> Optional[np.ndarray]:
-#         return self.best_theta[:, :-1] if self.best_theta is not None else None
-
-#     @property
-#     def bias(self) -> Optional[float]:
-#         if self.best_theta is None or not self.include_bias:
-#             return None
-#         return self.best_theta[:, -1]
-
-#     def maybe_add_ones_dimension(self, h):
-#         """Maybe add a ones column for the bias term."""
-#         if self.include_bias and h.shape[-1] == self.input_dim:
-#             return np.concatenate([h, np.ones(h.shape[0])[:, None]], axis=-1)
-#         else:
-#             return h
-
-#     @abstractmethod
-#     def get_loss(
-#         self,
-#         probs1: tuple[Tensor, Tensor],
-#         y1: Tensor,
-#         probs2: Optional[tuple[Tensor, Tensor]] = None,
-#         y2: Optional[Tensor] = None,
-#     ):
-#         """Compute the loss."""
-#         pass
-
-#     @abstractmethod
-#     def get_losses(
-#         self,
-#         probs1: tuple[Tensor, Tensor],
-#         y1: Tensor,
-#         probs2: Optional[tuple[Tensor, Tensor]] = None,
-#         y2: Optional[Tensor] = None,
-#     ) -> collections.OrderedDict[str, float]:
-#         """Return one or more loss terms."""
-#         pass
-
-#     def predict(
-#         self, x: Tensor, theta: Optional[Tensor] = None
-#     ) -> torch.Tensor:
-#         """Predict the probability for the given x."""
-#         if theta is None:
-#             theta = self.best_theta
-#         logit = torch.tensor(x.dot(theta.T))
-#         return torch.sigmoid(logit)
-
-#     def predict_from_class_probs(
-#         self, p0: np.ndarray, p1: np.ndarray
-#     ) -> np.ndarray:
-#         """Predict class 1 probability from both class probabilities."""
-#         return 0.5 * (p1 + (1 - p0))
-
-#     def get_acc(self, theta_np: np.ndarray, x: ContrastPairNp, label) -> float:
-#         """Compute the accuracy of a given direction for the data."""
-#         x = [self.maybe_add_ones_dimension(d) for d in x]
-#         p0, p1 = [self.predict(d, theta_np) for d in x]
-#         avg_confidence = self.predict_probs(p0, p1)
-
-#         label = label.reshape(-1)
-#         predictions = (avg_confidence >= 0.5).astype(int)[:, 0]
-#         return (predictions == label).mean()
-
-#     def train(
-#         self,
-#         x1: ContrastPairNp,
-#         y1: np.ndarray,
-#         x2: Optional[ContrastPairNp] = None,
-#         y2: Optional[np.ndarray] = None,
-#         init_theta: Optional[torch.Tensor] = None,
-#         n_epochs: int = 1000,
-#         lr: float = 1e-2,
-#         device="cuda",
-#     ):
-#         """Perform a single training run."""
-#         # Initialize parameters
-#         if init_theta is None:
-#             init_theta = np.random.randn(self.theta_dim).reshape(1, -1)
-#             init_theta = init_theta / np.linalg.norm(init_theta)
-#         else:
-#             init_theta = init_theta
-
-#         init_theta = project_coeff(init_theta, self.constraints)
-
-#         if self.no_train:
-#             return init_theta, 0
-
-#         theta = torch.tensor(
-#             init_theta,
-#             dtype=torch.float,
-#             requires_grad=True,
+#     orthogonal_dirs = None
+#     lr_fit_results = []
+#     for i in range(num_orthogonal_dirs):
+#         logger.info(f"Direction {i+1}/{num_orthogonal_dirs}.")
+#         fit_result = fit(
+#             train_sup_x0,
+#             train_sup_x1,
+#             train_sup_y,
+#             train_unsup_x0,
+#             train_unsup_x1,
+#             train_unsup_y,
+#             test_sup_x0,
+#             test_sup_x1,
+#             test_sup_y,
+#             test_unsup_x0,
+#             test_unsup_x1,
+#             test_unsup_y,
+#             orthogonal_dirs=orthogonal_dirs,
+#             include_bias=True,
+#             verbose=True,
 #             device=device,
+#             logger=logger,
+#             **lr_train_kwargs,
 #         )
 
-#         x1 = tuple(
-#             torch.tensor(
-#                 x, dtype=torch.float, requires_grad=False, device=device
-#             )
-#             for x in x1
+#         # [input_dim, 1]
+#         new_orthogonal_dir = (
+#             fit_result["best_probe"].linear.weight.detach().cpu().numpy()
+#         ).T
+#         new_orthogonal_dir = normalize(new_orthogonal_dir)
+#         if orthogonal_dirs is None:
+#             orthogonal_dirs = new_orthogonal_dir
+#         else:
+#             orthogonal_dirs = np.hstack([orthogonal_dirs, new_orthogonal_dir])
+
+#         # Remove elements that are not JSON-serializable.
+#         del fit_result["best_probe"]
+#         del fit_result["all_probes"]
+#         lr_fit_results.append(fit_result)
+
+#     ccs_train_kwargs = copy(train_kwargs)
+#     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
+#     final_fit_result = fit(
+#         train_sup_x0,
+#         train_sup_x1,
+#         train_sup_y,
+#         train_unsup_x0,
+#         train_unsup_x1,
+#         train_unsup_y,
+#         test_sup_x0,
+#         test_sup_x1,
+#         test_sup_y,
+#         test_unsup_x0,
+#         test_unsup_x1,
+#         test_unsup_y,
+#         span_dirs=orthogonal_dirs,
+#         include_bias=False,
+#         verbose=True,
+#         device=device,
+#         logger=logger,
+#         **ccs_train_kwargs,
+#     )
+#     final_fit_result["lr_fit_results"] = lr_fit_results
+#     final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
+
+#     best_probe = final_fit_result["best_probe"]
+#     final_fit_result["best_probe_weight"] = (
+#         best_probe.linear.weight.detach().cpu().numpy().tolist()
+#     )
+#     if best_probe.linear.bias is not None:
+#         final_fit_result["best_probe_bias"] = (
+#             best_probe.linear.bias.detach().cpu().numpy().tolist()
 #         )
-#         if x2 is not None:
-#             x2 = tuple(
-#                 torch.tensor(
-#                     x, dtype=torch.float, requires_grad=False, device=device
-#                 )
-#                 for x in x2
-#             )
 
-#         if self.constraints is not None:
-#             constraints_t = torch.tensor(
-#                 self.constraints,
-#                 dtype=torch.float,
-#                 requires_grad=False,
-#                 device=device,
-#             )
-#         else:
-#             constraints_t = None
-
-#         # set up optimizer
-#         optimizer = torch.optim.AdamW([theta], lr=lr)
-
-#         losses = []
-#         for _ in range(n_epochs):
-#             # project onto theta
-#             # TODO: does this affect the gradients?
-#             theta_ = project_coeff(theta, constraints_t)
-
-#             probs1 = (self.predict(x1[0], theta_), self.predict(x1[1], theta_))
-
-#             if x2 is not None:
-#                 probs2 = (
-#                     self.predict(x2[0], theta_),
-#                     self.predict(x2[1], theta_),
-#                 )
-#             else:
-#                 probs2 = None
-
-#             # get the corresponding loss
-#             loss = self.get_loss(probs1, y1, probs2=probs2, y2=y2)
-
-#             # update the parameters
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-
-#             # no gradient manipulation here
-#             # TODO: don't use .data. See https://stackoverflow.com/questions/51743214/is-data-still-useful-in-pytorch
-#             theta.data = project_coeff(theta.data, constraints_t)
-
-#             loss_np = loss.detach().cpu().item()
-#             losses.append(loss_np)
-
-#         theta_np = theta.cpu().detach().numpy().reshape(1, -1)
-
-#         return theta_np, losses
-
-#     def fit(
-#         self,
-#         x1: ContrastPairNp,
-#         y1: np.ndarray,
-#         x2: Optional[ContrastPairNp] = None,
-#         y2: Optional[np.ndarray] = None,
-#         nepochs=1000,
-#         ntries=10,
-#         lr=1e-2,
-#         init_theta=None,
-#         device="cuda",
-#     ):
-#         """Fit the classifier to the data.
-
-#         Args:
-#             x1: Contrast pair data.
-#             y1: Labels for x1.
-#             x2: Optional second set of data for supervision.
-#             y2: Labels for x2.
-#         """
-#         self.validate_data(x1, y1, x2, y2)
-#         if init_theta is not None:
-#             ntries = 1
-
-#         self.best_loss = np.inf
-#         self.best_theta = init_theta
-
-#         best_acc = 0.0
-#         losses = []
-#         accs = []
-#         accs1 = [] if x2 is not None else None
-#         accs2 = [] if x2 is not None else None
-
-#         x1 = tuple(self.maybe_add_ones_dimension(x) for x in x1)
-#         if x2 is not None:
-#             x2 = tuple(self.maybe_add_ones_dimension(x) for x in x2)
-
-#         for _ in range(ntries):
-#             theta_np, losses = self.train(
-#                 x1,
-#                 y1,
-#                 x2=x2,
-#                 y2=y2,
-#                 init_theta=init_theta,
-#                 n_epochs=nepochs,
-#                 lr=lr,
-#                 device=device,
-#             )
-#             acc1 = self.get_acc(theta_np, x1, y1)
-#             if x2 is not None:
-#                 acc2 = self.get_acc(theta_np, x2, y2)
-#                 # TODO: maybe these should be weighted differently.
-#                 acc = np.average([acc1, acc2], weights=[len(y1), len(y2)])
-#                 accs1.append(acc1)
-#                 accs2.append(acc2)
-#             else:
-#                 acc2 = None
-#                 acc = acc1
-
-#             accs.append(acc)
-#             losses.extend(losses)
-
-#             loss = losses[-1]
-#             if loss < self.best_loss:
-#                 if self.verbose and self.logger is not None:
-#                     self.logger.debug(
-#                         f"Found a new best theta. New loss: {format:.4f}, "
-#                         f"new acc: {acc:.4f}"
-#                     )
-#                 self.best_theta = theta_np
-#                 self.best_loss = loss
-#                 best_acc = acc
-
-#         return self.best_theta, self.best_loss, best_acc
-
-#     def score(
-#         self, x: ContrastPairNp, y: np.ndarray, get_loss=True, get_probs=True
-#     ) -> tuple[
-#         float,
-#         Optional[collections.OrderedDict[str, float]],
-#         Optional[np.ndarray],
-#         Optional[np.ndarray],
-#     ]:
-#         x = tuple(self.maybe_add_ones_dimension(d) for d in x)
-#         acc = self.get_acc(self.best_theta, x, y)
-
-#         if get_probs or get_loss:
-#             p0, p1 = [self.predict(d, self.best_theta) for d in x]
-#         else:
-#             p0 = None
-#             p1 = None
-
-#         if get_loss:
-#             # TODO: handle case where the full loss requires x1, y1, x2, and y2,
-#             # but only x1 and y1 are provided.
-#             losses = {
-#                 key: loss.cpu().detach().item()
-#                 for key, loss in self.get_losses(
-#                     (torch.tensor(p0), torch.tensor(p1)), y
-#                 ).items()
-#             }
-#         else:
-#             losses = None
-
-#         return acc, losses, p0, p1
-
-#     def get_train_loss(self):
-#         return self.best_loss
+#     return best_probe, final_fit_result

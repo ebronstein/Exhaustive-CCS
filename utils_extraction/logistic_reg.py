@@ -35,10 +35,9 @@ class LogisticRegressionClassifier(LogisticRegression):
         mode: Mode,
     ) -> tuple[
         float,
-        Optional[list[float]],
-        Optional[np.ndarray],
-        Optional[np.ndarray],
-        Optional[np.ndarray],
+        np.ndarray,
+        np.ndarray,
+        np.ndarray,
     ]:
         if mode == "concat":
             assert len(data) == 2

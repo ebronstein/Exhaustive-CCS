@@ -729,7 +729,6 @@ def mainResults(
         seed (int, optional): Seed for random number generation. Defaults to None.
         run_id (int, optional): Sacred Run ID. Defaults to None.
     """
-    start = time.time()
     if print_more:
         print(
             "Projection method: {} (n_con = {}) in {}\nClassification method: {} in: {}".format(
@@ -828,7 +827,7 @@ def mainResults(
         # Use train_prefix for the labeled data and test_prefix for the
         # unlabeled data.
         classify_model, fit_result = train_ccs_in_lr_span(
-            train_prefix_data_dict,
+            data_dict,
             permutation_dict,
             train_data_dict,
             labeled_train_data_dict,
@@ -836,6 +835,7 @@ def mainResults(
             train_prefix,
             test_prefix,
             num_orthogonal_dirs,
+            mode,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
