@@ -113,14 +113,14 @@ def sacred_config():
     labeled_datasets: Union[str, list[str]] = []
     # Prefix to use for training.
     prefix: PrefixType = "normal"
-    # Prefix to use for evaluation.
-    test_prefix: PrefixType = "normal"
+    # Prefix to use for evaluation. If None, the training prefix will be used.
+    test_prefix: Optional[PrefixType] = None
     data_num: int = 1000
     mode: Literal["auto", "minus", "concat"] = "auto"
     load_dir = "generation_results"
     location: Literal["auto", "encoder", "decoder"] = "auto"
     layer: int = -1
-    num_layers = hf_utils.get_num_hidden_layers(model)
+    num_layers = hf_utils.get_num_hidden_layers(model, use_auth_token=HF_AUTH_TOKEN)
     # File name where zero-shot results will be saved.
     zero: str = "zero_shot"
     seed: int = 0
@@ -225,7 +225,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     labeled_train_datasets = _config["labeled_datasets"]
     eval_datasets = _config["eval_datasets"]
     prefix = _config["prefix"]
-    test_prefix = _config["test_prefix"]
+    test_prefix = _config["test_prefix"] if _config["test_prefix"] is not None else prefix
 
     run_id = _run._id
     run_dir = os.path.join(exp_dir, run_id)
