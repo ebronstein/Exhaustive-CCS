@@ -590,9 +590,9 @@ def train_ccs_in_lr_span(
 
         # Eval
         fit_result = []
-        fit_result["proj_train_acc"] = lr_model.score((cur_train_sup_x0, cur_train_sup_x1), train_sup_y)
-        fit_result["train_acc"] = lr_model.score((train_sup_x0, train_sup_x1), train_sup_y)
-        fit_result["test_acc"] = lr_model.score((test_sup_x0, test_sup_x1), test_sup_y)
+        fit_result["proj_train_acc"] = lr_model.score((cur_train_sup_x0, cur_train_sup_x1), train_sup_y, mode)[0]
+        fit_result["train_acc"] = lr_model.score((train_sup_x0, train_sup_x1), train_sup_y, mode)[0]
+        fit_result["test_acc"] = lr_model.score((test_sup_x0, test_sup_x1), test_sup_y, mode)[0]
         lr_fit_results.append(fit_result)
 
         # Project away the direction.
