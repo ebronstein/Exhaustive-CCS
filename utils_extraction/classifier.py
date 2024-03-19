@@ -41,13 +41,9 @@ def project(x, along_directions):
     """Project x along the along_directions.
 
     x of shape (..., d) and along_directions of shape (n_directions, d)"""
-    if isinstance(x, torch.Tensor) and isinstance(
-        along_directions, torch.Tensor
-    ):
+    if isinstance(x, torch.Tensor) and isinstance(along_directions, torch.Tensor):
         inner_products = torch.einsum("...d,nd->...n", x, along_directions)
-        return x - torch.einsum(
-            "...n,nd->...d", inner_products, along_directions
-        )
+        return x - torch.einsum("...n,nd->...d", inner_products, along_directions)
     elif isinstance(x, np.ndarray) and isinstance(along_directions, np.ndarray):
         inner_products = np.einsum("...d,nd->...n", x, along_directions)
         return x - np.einsum("...n,nd->...d", inner_products, along_directions)
@@ -69,9 +65,7 @@ def project_coeff(coef_and_bias, along_directions):
     elif isinstance(coef_and_bias, np.ndarray):
         return np.concatenate([new_coef, bias[:, None]], axis=-1)
     else:
-        raise ValueError(
-            "coef_and_bias should be either torch.Tensor or np.ndarray"
-        )
+        raise ValueError("coef_and_bias should be either torch.Tensor or np.ndarray")
 
 
 def project_data_along_axis(data, labels):
@@ -142,18 +136,14 @@ class ContrastPairClassifier(nn.Module):
             self.span_dirs = None
         elif span_dirs is not None:
             if self.include_bias:
-                raise ValueError(
-                    "Cannot include bias if span_dirs is provided."
-                )
+                raise ValueError("Cannot include bias if span_dirs is provided.")
 
             span_dirs = process_directions(span_dirs, input_dim)
             self.register_buffer(
                 "span_dirs",
                 torch.tensor(span_dirs, dtype=torch.float32).to(device),
             )
-            self.linear = nn.Linear(span_dirs.shape[1], 1, bias=False).to(
-                device
-            )
+            self.linear = nn.Linear(span_dirs.shape[1], 1, bias=False).to(device)
 
             self.orthogonal_dirs = None
         else:
@@ -320,9 +310,7 @@ class ContrastPairClassifier(nn.Module):
                     f"Epoch {epoch+1}/{n_epochs}, Loss: {train_losses['total_loss'].item()}"
                 )
 
-            train_history["weight_norm"].append(
-                self.linear.weight.norm().item()
-            )
+            train_history["weight_norm"].append(self.linear.weight.norm().item())
             if self.include_bias:
                 train_history["bias"].append(self.linear.bias.item())
 
@@ -392,32 +380,22 @@ def fit(
     # Convert data to tensors.
     train_sup_x0 = torch.tensor(train_sup_x0, dtype=torch.float, device=device)
     train_sup_x1 = torch.tensor(train_sup_x1, dtype=torch.float, device=device)
-    train_sup_y = torch.tensor(
-        train_sup_y, dtype=torch.float, device=device
-    ).view(-1, 1)
-    train_unsup_x0 = torch.tensor(
-        train_unsup_x0, dtype=torch.float, device=device
+    train_sup_y = torch.tensor(train_sup_y, dtype=torch.float, device=device).view(
+        -1, 1
     )
-    train_unsup_x1 = torch.tensor(
-        train_unsup_x1, dtype=torch.float, device=device
+    train_unsup_x0 = torch.tensor(train_unsup_x0, dtype=torch.float, device=device)
+    train_unsup_x1 = torch.tensor(train_unsup_x1, dtype=torch.float, device=device)
+    train_unsup_y = torch.tensor(train_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
     )
-    train_unsup_y = torch.tensor(
-        train_unsup_y, dtype=torch.float, device=device
-    ).view(-1, 1)
     test_sup_x0 = torch.tensor(test_sup_x0, dtype=torch.float, device=device)
     test_sup_x1 = torch.tensor(test_sup_x1, dtype=torch.float, device=device)
-    test_sup_y = torch.tensor(
-        test_sup_y, dtype=torch.float, device=device
-    ).view(-1, 1)
-    test_unsup_x0 = torch.tensor(
-        test_unsup_x0, dtype=torch.float, device=device
+    test_sup_y = torch.tensor(test_sup_y, dtype=torch.float, device=device).view(-1, 1)
+    test_unsup_x0 = torch.tensor(test_unsup_x0, dtype=torch.float, device=device)
+    test_unsup_x1 = torch.tensor(test_unsup_x1, dtype=torch.float, device=device)
+    test_unsup_y = torch.tensor(test_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
     )
-    test_unsup_x1 = torch.tensor(
-        test_unsup_x1, dtype=torch.float, device=device
-    )
-    test_unsup_y = torch.tensor(
-        test_unsup_y, dtype=torch.float, device=device
-    ).view(-1, 1)
 
     for _ in range(n_tries):
         classifier = ContrastPairClassifier(
@@ -565,14 +543,10 @@ def train_ccs_in_lr_span(
         "lr",
         "opt",
     ]
-    train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
-    }
+    train_kwargs = {k: v for k, v in train_kwargs.items() if k in train_kwargs_names}
 
     lr_train_kwargs = train_kwargs.pop("log_reg", {})
-    lr_model = LogisticRegressionClassifier(
-        n_jobs=1, **lr_train_kwargs
-    )
+    lr_model = LogisticRegressionClassifier(n_jobs=1, **lr_train_kwargs)
 
     cur_train_sup_x0 = train_sup_x0.copy()
     cur_train_sup_x1 = train_sup_x1.copy()
@@ -581,7 +555,6 @@ def train_ccs_in_lr_span(
     lr_fit_results = []
     for i in range(num_orthogonal_dirs):
         logger.info(f"Direction {i+1}/{num_orthogonal_dirs}.")
-        breakpoint()
 
         lr_model.fit((cur_train_sup_x0, cur_train_sup_x1), train_sup_y, mode)
         orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
@@ -590,17 +563,20 @@ def train_ccs_in_lr_span(
 
         # Eval
         fit_result = []
-        fit_result["proj_train_acc"] = lr_model.score((cur_train_sup_x0, cur_train_sup_x1), train_sup_y)
-        fit_result["train_acc"] = lr_model.score((train_sup_x0, train_sup_x1), train_sup_y)
+        fit_result["proj_train_acc"] = lr_model.score(
+            (cur_train_sup_x0, cur_train_sup_x1), train_sup_y
+        )
+        fit_result["train_acc"] = lr_model.score(
+            (train_sup_x0, train_sup_x1), train_sup_y
+        )
         fit_result["test_acc"] = lr_model.score((test_sup_x0, test_sup_x1), test_sup_y)
         lr_fit_results.append(fit_result)
 
         # Project away the direction.
-        cur_train_sup_x0 -= ((cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir)
-        cur_train_sup_x1 -= ((cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir)
+        cur_train_sup_x0 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
+        cur_train_sup_x1 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
         assert np.allclose(cur_train_sup_x0 @ orth_dir, 0)
         assert np.allclose(cur_train_sup_x1 @ orth_dir, 0)
-
 
     ccs_train_kwargs = copy(train_kwargs)
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
@@ -637,6 +613,7 @@ def train_ccs_in_lr_span(
         )
 
     return best_probe, final_fit_result
+
 
 def train_ccs_lr(
     data_dict: PrefixDataDictType,
@@ -694,9 +671,7 @@ def train_ccs_lr(
         "sup_weight",
         "opt",
     ]
-    train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
-    }
+    train_kwargs = {k: v for k, v in train_kwargs.items() if k in train_kwargs_names}
 
     # Train the model.
     fit_result = fit(
