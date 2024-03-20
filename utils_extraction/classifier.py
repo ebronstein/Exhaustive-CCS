@@ -537,16 +537,7 @@ def train_ccs_in_lr_span(
         project_along_mean_diff=project_along_mean_diff,
     )
 
-    train_kwargs_names = [
-        "n_tries",
-        "n_epochs",
-        "lr",
-        "opt",
-    ]
-    train_kwargs = {k: v for k, v in train_kwargs.items() if k in train_kwargs_names}
-
     lr_train_kwargs = train_kwargs.pop("log_reg", {})
-    lr_model = LogisticRegressionClassifier(n_jobs=1, **lr_train_kwargs)
 
     cur_train_sup_x0 = train_sup_x0.copy()
     cur_train_sup_x1 = train_sup_x1.copy()
@@ -554,34 +545,48 @@ def train_ccs_in_lr_span(
     orthogonal_dirs = []
     lr_fit_results = []
     for i in range(num_orthogonal_dirs):
-        logger.info(f"Direction {i+1}/{num_orthogonal_dirs}.")
 
+        lr_model = LogisticRegressionClassifier(
+            n_jobs=1, solver="saga", **lr_train_kwargs
+        )
         lr_model.fit((cur_train_sup_x0, cur_train_sup_x1), train_sup_y, mode)
         orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
         orth_dir = orth_dir.squeeze(0)
         orthogonal_dirs.append(orth_dir)
+        logger.info(f"Direction {i+1}/{num_orthogonal_dirs}: {orth_dir}")
 
         # Eval
         fit_result = {}
-        fit_result["proj_train_acc"] = lr_model.score(
-            (cur_train_sup_x0, cur_train_sup_x1), train_sup_y
-        )[0]
         fit_result["train_acc"] = lr_model.score(
-            (train_sup_x0, train_sup_x1), train_sup_y
+            (train_sup_x0, train_sup_x1), train_sup_y, mode
         )[0]
-        fit_result["test_acc"] = lr_model.score((test_sup_x0, test_sup_x1), test_sup_y)[
-            0
-        ]
+        fit_result["test_acc"] = lr_model.score(
+            (test_sup_x0, test_sup_x1), test_sup_y, mode
+        )[0]
         lr_fit_results.append(fit_result)
+
+        logger.info(f"Train acc: {fit_result['train_acc']:.4f}")
+        logger.info(f"Test acc: {fit_result['test_acc']:.4f}")
 
         # Project away the direction.
         cur_train_sup_x0 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
-        cur_train_sup_x1 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
-        assert np.allclose(cur_train_sup_x0 @ orth_dir, 0)
-        assert np.allclose(cur_train_sup_x1 @ orth_dir, 0)
+        cur_train_sup_x1 -= (cur_train_sup_x1 @ orth_dir)[:, None] * orth_dir
+        assert np.abs(cur_train_sup_x0 @ orth_dir).max() < 1e-4
+        assert np.abs(cur_train_sup_x1 @ orth_dir).max() < 1e-4
 
-    ccs_train_kwargs = copy(train_kwargs)
+    orthogonal_dirs = np.array(orthogonal_dirs).T
+
+    train_kwargs_names = [
+        "n_tries",
+        "n_epochs",
+        "lr",
+        "opt",
+    ]
+    ccs_train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+    }
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
+    breakpoint()
     final_fit_result = fit(
         train_sup_x0,
         train_sup_x1,
