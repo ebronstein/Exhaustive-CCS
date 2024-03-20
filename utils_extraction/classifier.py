@@ -1,6 +1,9 @@
+import json
+import os
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
 from copy import copy
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
@@ -487,80 +490,35 @@ def make_contrast_pair_data(
     return x, y
 
 
-def train_ccs_in_lr_span(
-    data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
-    unlabeled_train_data_dict: PromptIndicesDictType,
-    labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
-    labeled_prefix: str,
-    unlabeled_prefix: str,
+def train_orthogonal_lr_probes(
+    train_sup_x0: np.ndarray,
+    train_sup_x1: np.ndarray,
+    train_sup_y: np.ndarray,
+    test_sup_x0: np.ndarray,
+    test_sup_x1: np.ndarray,
+    test_sup_y: np.ndarray,
+    train_unsup_x0: np.ndarray,
+    train_unsup_x1: np.ndarray,
+    train_unsup_y: np.ndarray,
+    test_unsup_x0: np.ndarray,
+    test_unsup_x1: np.ndarray,
+    test_unsup_y: np.ndarray,
     num_orthogonal_directions: int,
     mode: Mode,
-    train_kwargs={},
-    project_along_mean_diff=False,
-    device="cuda",
+    train_kwargs=None,
     logger=None,
-) -> tuple[ContrastPairClassifier, dict, np.ndarray]:
-    """Train CCS in span of LR directions.
-
-    Args:
-        TODO
-
-    Returns:
-        best_probe: The best probe.
-        final_fit_result: The fit result of the CCS and LR probes.
-        orthogonal_dirs: The orthogonal directions found by LR with shape
-            [hidden_dim, n_directions].
-    """
-    # Labeled data.
-    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
-        target_dict=labeled_train_data_dict,
-        data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="train",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
-        target_dict=labeled_train_data_dict,
-        data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="test",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    # Unlabeled data.
-    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
-        target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="train",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
-        target_dict=unlabeled_train_data_dict,
-        data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
-        projection_model=projection_model,
-        split="test",
-        project_along_mean_diff=project_along_mean_diff,
-    )
-
-    lr_train_kwargs = train_kwargs.pop("log_reg", {})
-
+):
+    train_kwargs = train_kwargs or {}
     cur_train_sup_x0 = train_sup_x0.copy()
     cur_train_sup_x1 = train_sup_x1.copy()
-
     orthogonal_dirs = []
     lr_fit_results = []
-    for i in range(num_orthogonal_directions):
-        logger.info(f"Direction {i+1}/{num_orthogonal_directions}")
 
-        lr_model = LogisticRegressionClassifier(
-            n_jobs=1, solver="saga", **lr_train_kwargs
-        )
+    for i in range(num_orthogonal_directions):
+        if logger is not None:
+            logger.info(f"Direction {i+1}/{num_orthogonal_directions}")
+
+        lr_model = LogisticRegressionClassifier(n_jobs=1, solver="saga", **train_kwargs)
         lr_model.fit((cur_train_sup_x0, cur_train_sup_x1), train_sup_y, mode)
         orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
         orth_dir = orth_dir.squeeze(0)
@@ -582,10 +540,11 @@ def train_ccs_in_lr_span(
         )[0]
         lr_fit_results.append(fit_result)
 
-        logger.info(f"Sup train acc: {fit_result['sup_train_acc']:.4f}")
-        logger.info(f"Sup test acc: {fit_result['sup_test_acc']:.4f}")
-        logger.info(f"Unsup train acc: {fit_result['unsup_train_acc']:.4f}")
-        logger.info(f"Unsup test acc: {fit_result['unsup_test_acc']:.4f}")
+        if logger is not None:
+            logger.info(f"Sup train acc: {fit_result['sup_train_acc']:.4f}")
+            logger.info(f"Sup test acc: {fit_result['sup_test_acc']:.4f}")
+            logger.info(f"Unsup train acc: {fit_result['unsup_train_acc']:.4f}")
+            logger.info(f"Unsup test acc: {fit_result['unsup_test_acc']:.4f}")
 
         # Project away the direction.
         cur_train_sup_x0 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
@@ -594,6 +553,106 @@ def train_ccs_in_lr_span(
         assert np.abs(cur_train_sup_x1 @ orth_dir).max() < 1e-4
 
     orthogonal_dirs = np.array(orthogonal_dirs).T
+
+    return orthogonal_dirs, lr_fit_results
+
+
+def train_ccs_in_lr_span(
+    data_dict: PrefixDataDictType,
+    permutation_dict: PermutationDictType,
+    unlabeled_train_data_dict: PromptIndicesDictType,
+    labeled_train_data_dict: PromptIndicesDictType,
+    projection_model: myReduction,
+    labeled_prefix: str,
+    unlabeled_prefix: str,
+    num_orthogonal_directions: int,
+    mode: Mode,
+    load_orthogonal_directions_run_dir: Optional[str] = None,
+    train_kwargs={},
+    project_along_mean_diff=False,
+    device="cuda",
+    logger=None,
+) -> tuple[ContrastPairClassifier, dict, np.ndarray]:
+    """Train CCS in span of LR directions.
+
+    Args:
+        TODO
+        load_orthogonal_directions_run_dir: Run directory from which to load the
+            orthogonal directions. If provided, expects the file
+            "{load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy"
+            to exist.
+
+    Returns:
+        best_probe: The best probe.
+        final_fit_result: The fit result of the CCS and LR probes.
+        orthogonal_dirs: The orthogonal directions found by LR with shape
+            [hidden_dim, n_directions].
+    """
+    # Labeled data.
+    sup_data_kwargs = dict(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict[labeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
+        split="train",
+        **sup_data_kwargs,
+    )
+    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
+        split="test",
+        **sup_data_kwargs,
+    )
+    # Unlabeled data.
+    unsup_data_kwargs = dict(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict[unlabeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
+        split="train", **unsup_data_kwargs
+    )
+    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
+        split="test", **unsup_data_kwargs
+    )
+
+    lr_train_kwargs = train_kwargs.pop("log_reg", {})
+
+    # Load the orthogonal directions if provided. Otherwise, train them.
+    if load_orthogonal_directions_run_dir is not None:
+        orthogonal_dirs_path = Path(load_orthogonal_directions_run_dir, "train/orthogonal_directions.npy")
+        if not os.path.exists(orthogonal_dirs_path):
+            raise ValueError(f"File not found: {orthogonal_dirs_path}")
+        orthogonal_dirs = np.load(orthogonal_dirs_path)
+
+        fit_result_path = Path(load_orthogonal_directions_run_dir, "train").glob("fit_result*.json")
+        fit_result_path = list(fit_result_path)
+        if len(fit_result_path) != 1:
+            raise ValueError(f"Expected 1 fit result file, found {len(fit_result_path)}")
+        with open(fit_result_path[0], "r") as f:
+            lr_fit_results = json.load(f)
+    else:
+        orthogonal_dirs, lr_fit_results = train_orthogonal_lr_probes(
+            train_sup_x0,
+            train_sup_x1,
+            train_sup_y,
+            test_sup_x0,
+            test_sup_x1,
+            test_sup_y,
+            train_unsup_x0,
+            train_unsup_x1,
+            train_unsup_y,
+            test_unsup_x0,
+            test_unsup_x1,
+            test_unsup_y,
+            num_orthogonal_directions,
+            mode,
+            train_kwargs=lr_train_kwargs,
+            logger=logger,
+        )
 
     train_kwargs_names = [
         "n_tries",
@@ -625,8 +684,12 @@ def train_ccs_in_lr_span(
         logger=logger,
         **ccs_train_kwargs,
     )
-    final_fit_result["lr_fit_results"] = lr_fit_results
     best_probe = final_fit_result["best_probe"]
+
+    # Add the orthogonal directions to the final fit result if they were trained
+    # in this run.
+    if load_orthogonal_directions_run_dir is None:
+        final_fit_result["lr_fit_results"] = lr_fit_results
 
     return best_probe, final_fit_result, orthogonal_dirs
 

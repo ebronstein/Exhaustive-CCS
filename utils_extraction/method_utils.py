@@ -672,6 +672,7 @@ def mainResults(
     seed: Optional[str] = None,
     run_id: Optional[str] = None,
     save_orthogonal_directions=False,
+    load_orthogonal_directions_run_dir: Optional[str] = None,
     logger=None,
 ):
     """
@@ -719,6 +720,10 @@ def mainResults(
         run_dir (str, optional): Root directory for the Sacred Run. Defaults to None.
         seed (int, optional): Seed for random number generation. Defaults to None.
         run_id (int, optional): Sacred Run ID. Defaults to None.
+        load_orthogonal_directions_run_dir: Run directory from which to load the
+            orthogonal directions. If provided, expects the file
+            "{load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy"
+            to exist.
     """
     if print_more:
         print(
@@ -791,6 +796,9 @@ def mainResults(
         }
         classify_model.fit(data=data, label=labels, **ccs_train_kwargs)
     elif classification_method == "CCS+LR":
+        if labeled_train_data_dict is None:
+            raise ValueError("labeled_train_data_dict must be provided for CCS+LR.")
+
         # Use train_prefix for the labeled data and test_prefix for the
         # unlabeled data.
         classify_model, fit_result = train_ccs_lr(
@@ -807,6 +815,10 @@ def mainResults(
             logger=logger,
         )
     elif classification_method == "CCS-in-LR-span":
+        if labeled_train_data_dict is None:
+            raise ValueError(
+                "labeled_train_data_dict must be provided for CCS-in-LR-span."
+            )
         if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
                 "num_orthogonal_directions required for 'CCS-in-LR-span method."
@@ -825,6 +837,7 @@ def mainResults(
             test_prefix,
             num_orthogonal_directions,
             mode,
+            load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,

@@ -136,6 +136,7 @@ def sacred_config():
     lr: float = 1e-2
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
+    load_orthogonal_directions_run_dir: Optional[str] = None
     device: Literal["cuda", "cpu"] = "cuda"
     # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
     log_reg = {
@@ -505,6 +506,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_dir=run_dir,
                 run_id=run_id,
                 save_orthogonal_directions=_config["save_orthogonal_directions"],
+                load_orthogonal_directions_run_dir=_config[
+                    "load_orthogonal_directions_run_dir"
+                ],
                 **kwargs,
             )
             (
