@@ -495,13 +495,24 @@ def train_ccs_in_lr_span(
     projection_model: myReduction,
     labeled_prefix: str,
     unlabeled_prefix: str,
-    num_orthogonal_dirs: int,
+    num_orthogonal_directions: int,
     mode: Mode,
     train_kwargs={},
     project_along_mean_diff=False,
     device="cuda",
     logger=None,
-) -> tuple[ContrastPairClassifier, dict]:
+) -> tuple[ContrastPairClassifier, dict, np.ndarray]:
+    """Train CCS in span of LR directions.
+
+    Args:
+        TODO
+
+    Returns:
+        best_probe: The best probe.
+        final_fit_result: The fit result of the CCS and LR probes.
+        orthogonal_dirs: The orthogonal directions found by LR with shape
+            [hidden_dim, n_directions].
+    """
     # Labeled data.
     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
@@ -544,7 +555,8 @@ def train_ccs_in_lr_span(
 
     orthogonal_dirs = []
     lr_fit_results = []
-    for i in range(num_orthogonal_dirs):
+    for i in range(num_orthogonal_directions):
+        logger.info(f"Direction {i+1}/{num_orthogonal_directions}")
 
         lr_model = LogisticRegressionClassifier(
             n_jobs=1, solver="saga", **lr_train_kwargs
@@ -553,20 +565,27 @@ def train_ccs_in_lr_span(
         orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
         orth_dir = orth_dir.squeeze(0)
         orthogonal_dirs.append(orth_dir)
-        logger.info(f"Direction {i+1}/{num_orthogonal_dirs}: {orth_dir}")
 
         # Eval
         fit_result = {}
-        fit_result["train_acc"] = lr_model.score(
+        fit_result["sup_train_acc"] = lr_model.score(
             (train_sup_x0, train_sup_x1), train_sup_y, mode
         )[0]
-        fit_result["test_acc"] = lr_model.score(
+        fit_result["sup_test_acc"] = lr_model.score(
             (test_sup_x0, test_sup_x1), test_sup_y, mode
+        )[0]
+        fit_result["unsup_train_acc"] = lr_model.score(
+            (train_unsup_x0, train_unsup_x1), train_unsup_y, mode
+        )[0]
+        fit_result["unsup_test_acc"] = lr_model.score(
+            (test_unsup_x0, test_unsup_x1), test_unsup_y, mode
         )[0]
         lr_fit_results.append(fit_result)
 
-        logger.info(f"Train acc: {fit_result['train_acc']:.4f}")
-        logger.info(f"Test acc: {fit_result['test_acc']:.4f}")
+        logger.info(f"Sup train acc: {fit_result['sup_train_acc']:.4f}")
+        logger.info(f"Sup test acc: {fit_result['sup_test_acc']:.4f}")
+        logger.info(f"Unsup train acc: {fit_result['unsup_train_acc']:.4f}")
+        logger.info(f"Unsup test acc: {fit_result['unsup_test_acc']:.4f}")
 
         # Project away the direction.
         cur_train_sup_x0 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
@@ -586,7 +605,6 @@ def train_ccs_in_lr_span(
         k: v for k, v in train_kwargs.items() if k in train_kwargs_names
     }
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-    breakpoint()
     final_fit_result = fit(
         train_sup_x0,
         train_sup_x1,
@@ -608,18 +626,9 @@ def train_ccs_in_lr_span(
         **ccs_train_kwargs,
     )
     final_fit_result["lr_fit_results"] = lr_fit_results
-    final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
-
     best_probe = final_fit_result["best_probe"]
-    final_fit_result["best_probe_weight"] = (
-        best_probe.linear.weight.detach().cpu().numpy().tolist()
-    )
-    if best_probe.linear.bias is not None:
-        final_fit_result["best_probe_bias"] = (
-            best_probe.linear.bias.detach().cpu().numpy().tolist()
-        )
 
-    return best_probe, final_fit_result
+    return best_probe, final_fit_result, orthogonal_dirs
 
 
 def train_ccs_lr(
@@ -712,7 +721,7 @@ def train_ccs_lr(
 #     projection_model: myReduction,
 #     labeled_prefix: str,
 #     unlabeled_prefix: str,
-#     num_orthogonal_dirs: int,
+#     num_orthogonal_directions: int,
 #     train_kwargs={},
 #     project_along_mean_diff=False,
 #     device="cuda",
@@ -767,8 +776,8 @@ def train_ccs_lr(
 
 #     orthogonal_dirs = None
 #     lr_fit_results = []
-#     for i in range(num_orthogonal_dirs):
-#         logger.info(f"Direction {i+1}/{num_orthogonal_dirs}.")
+#     for i in range(num_orthogonal_directions):
+#         logger.info(f"Direction {i+1}/{num_orthogonal_directions}.")
 #         fit_result = fit(
 #             train_sup_x0,
 #             train_sup_x1,

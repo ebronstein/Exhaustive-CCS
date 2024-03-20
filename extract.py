@@ -81,14 +81,14 @@ def get_method_str(method: str) -> str:
     return "CCS" if method.startswith("RCCS") else method
 
 
-def get_project_along_mean_diff(
-    method: str, project_along_mean_diff: bool
-) -> bool:
+def get_project_along_mean_diff(method: str, project_along_mean_diff: bool) -> bool:
     return "-md" in method or project_along_mean_diff
 
 
 def method_uses_concat_hs_mode(method: str) -> bool:
-    return (method in ("CCS", "CCS+LR", "CCS-in-LR-span", "Random")) or method.startswith("RCCS")
+    return (
+        method in ("CCS", "CCS+LR", "CCS-in-LR-span", "Random")
+    ) or method.startswith("RCCS")
 
 
 def default_method_mode(method: str) -> str:
@@ -135,7 +135,7 @@ def sacred_config():
     unsup_weight: float = 1.0
     lr: float = 1e-2
     opt: Literal["sgd", "adam"] = "sgd"
-    num_orthogonal_dirs: int = 4
+    num_orthogonal_directions: int = 4
     device: Literal["cuda", "cpu"] = "cuda"
     # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
     log_reg = {
@@ -152,6 +152,7 @@ def sacred_config():
     save_params = True
     save_results: bool = True
     save_train_test_split: bool = True
+    save_orthogonal_directions: bool = False
 
     # Evaluation
 
@@ -225,7 +226,9 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     labeled_train_datasets = _config["labeled_datasets"]
     eval_datasets = _config["eval_datasets"]
     prefix = _config["prefix"]
-    test_prefix = _config["test_prefix"] if _config["test_prefix"] is not None else prefix
+    test_prefix = (
+        _config["test_prefix"] if _config["test_prefix"] is not None else prefix
+    )
 
     run_id = _run._id
     run_dir = os.path.join(exp_dir, run_id)
@@ -243,9 +246,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         )
         load_params_run_id = _config["load_params_run_id"]
         if load_params_run_id == "latest":
-            load_params_run_id = load_utils.maximum_existing_run_id(
-                load_exp_dir
-            )
+            load_params_run_id = load_utils.maximum_existing_run_id(load_exp_dir)
         load_run_dir = os.path.join(load_exp_dir, str(load_params_run_id))
 
         # Check that the parameter directory exists for each method.
@@ -275,9 +276,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
     # TODO: look into how zero-shot results are being saved.
     if "0-shot" in _config["method_list"]:
-        raise NotImplementedError(
-            "Zero-shot extraction is not yet implemented."
-        )
+        raise NotImplementedError("Zero-shot extraction is not yet implemented.")
         # # load zero-shot performance
         # rawzeros = pd.read_csv(
         #     os.path.join(_config["load_dir"], "{}.csv".format(_config["zero"]))
@@ -402,8 +401,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         data_dict = mode_to_data[mode]
         permutation_dict = {
-            ds: make_permutation_dict(data_dict[prefix][ds])
-            for ds in datasets_to_load
+            ds: make_permutation_dict(data_dict[prefix][ds]) for ds in datasets_to_load
         }
         assert data_dict[prefix].keys() == set(datasets_to_load)
         assert permutation_dict.keys() == set(datasets_to_load)
@@ -420,21 +418,17 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         # Arbitrarily use prefix instead of test_prefix to index into data_dict
         # since the number of prompts should be the same for both.
         projection_dict = {
-            ds: list(range(len(data_dict[prefix][ds])))
-            for ds in projection_datasets
+            ds: list(range(len(data_dict[prefix][ds]))) for ds in projection_datasets
         }
 
         train_data_dict = {
             ds: range(len(data_dict[prefix][ds])) for ds in train_datasets
         }
         labeled_train_data_dict = {
-            ds: range(len(data_dict[prefix][ds]))
-            for ds in labeled_train_datasets
+            ds: range(len(data_dict[prefix][ds])) for ds in labeled_train_datasets
         }
 
-        test_dict = {
-            ds: range(len(data_dict[test_prefix][ds])) for ds in eval_datasets
-        }
+        test_dict = {ds: range(len(data_dict[test_prefix][ds])) for ds in eval_datasets}
 
         n_components = 1 if method == "TPC" else -1
 
@@ -452,9 +446,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 # TODO: replace this with call to parameter-loading function
                 # and use a different directory where the previous CCS params
                 # are stored.
-                constraints = np.load(
-                    os.path.join(prev_rccs_params_dir, "coef.npy")
-                )
+                constraints = np.load(os.path.join(prev_rccs_params_dir, "coef.npy"))
                 old_biases = np.load(
                     os.path.join(prev_rccs_params_dir, "intercept.npy")
                 )
@@ -468,7 +460,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             unsup_weight=_config["unsup_weight"],
             lr=_config["lr"],
             opt=_config["opt"],
-            num_orthogonal_dirs=_config["num_orthogonal_dirs"],
+            num_orthogonal_directions=_config["num_orthogonal_directions"],
             log_reg=_config["log_reg"],
         )
         kwargs = dict(
@@ -503,9 +495,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_id=_config["load_params_run_id"],
                 **kwargs,
             )
-            acc_dict, loss_dict, ece_dict, proj_model, classifier = eval(
-                **eval_kwargs
-            )
+            acc_dict, loss_dict, ece_dict, proj_model, classifier = eval(**eval_kwargs)
         else:
             main_results_kwargs = dict(
                 data_dict=data_dict,
@@ -514,6 +504,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 constraints=constraints,
                 run_dir=run_dir,
                 run_id=run_id,
+                save_orthogonal_directions=_config["save_orthogonal_directions"],
                 **kwargs,
             )
             (
@@ -547,9 +538,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         ):
             save_params_dir = get_params_dir(
                 run_dir,
-                maybe_append_project_suffix(
-                    method_str, project_along_mean_diff
-                ),
+                maybe_append_project_suffix(method_str, project_along_mean_diff),
                 prefix,
             )
             if method in ["TPC", "BSS"]:
@@ -597,9 +586,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             for loss_name in loss_names:
                 mean_losses[loss_name] = np.mean(
                     [
-                        np.mean(
-                            [losses[loss_name] for losses in test_set_losses]
-                        )
+                        np.mean([losses[loss_name] for losses in test_set_losses])
                         for test_set_losses in loss_dict.values()
                     ]
                 )
@@ -610,12 +597,10 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         og_ece_dict = ece_dict
         ece_dict = {
-            key: [ece[0] for ece in ece_vals]
-            for key, ece_vals in og_ece_dict.items()
+            key: [ece[0] for ece in ece_vals] for key, ece_vals in og_ece_dict.items()
         }
         ece_flip_dict = {
-            key: [ece[1] for ece in ece_vals]
-            for key, ece_vals in og_ece_dict.items()
+            key: [ece[1] for ece in ece_vals] for key, ece_vals in og_ece_dict.items()
         }
         mean_ece = getAvg(ece_dict)
         mean_ece_flip = getAvg(ece_flip_dict)
@@ -665,9 +650,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                     continue
 
                 if method in ["CCS+LR", "CCS-in-LR-span"]:
-                    for loss_name, loss in loss_dict[test_set][
-                        prompt_idx
-                    ].items():
+                    for loss_name, loss in loss_dict[test_set][prompt_idx].items():
                         eval_result[loss_name] = loss
                 elif "CCS" in method:
                     loss, sim_loss, cons_loss = loss_dict[test_set][prompt_idx]

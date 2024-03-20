@@ -33,9 +33,7 @@ from utils_extraction.projection import IdentityReduction, myReduction
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
 
-EvalClassificationMethodType = Literal[
-    "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"
-]
+EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"]
 
 
 def is_method_unsupervised(method):
@@ -182,9 +180,7 @@ class ConsistencyMethod(object):
         )
 
     # return the probability tuple (p0, p1)
-    def transform(
-        self, data: list, theta_np=None
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def transform(self, data: list, theta_np=None) -> tuple[np.ndarray, np.ndarray]:
         if theta_np is None:
             theta_np = self.best_theta
         z0, z1 = torch.tensor(
@@ -467,9 +463,7 @@ class myClassifyModel(LogisticRegression):
                 self.sign = -1
 
             # set to model parameters
-            self.set_params(
-                np.array(self.sign).reshape(1, 1), -self.sign * self.avg
-            )
+            self.set_params(np.array(self.sign).reshape(1, 1), -self.sign * self.avg)
 
         elif self.method == "KMeans":
             self.model = KMeans(n_clusters=2)
@@ -500,9 +494,7 @@ class myClassifyModel(LogisticRegression):
                 weights = [w / sum(weights) for w in weights]  # normalize
 
             sample_weight = [
-                u / w.shape[0]
-                for u, w in zip(weights, data)
-                for _ in range(w.shape[0])
+                u / w.shape[0] for u, w in zip(weights, data) for _ in range(w.shape[0])
             ]
 
             minloss = 1.0
@@ -562,9 +554,7 @@ class myClassifyModel(LogisticRegression):
                             self.sign = -1
 
                         # set to model parameters
-                        self.set_params(
-                            self.sign * theta_np, -self.sign * self.avg
-                        )
+                        self.set_params(self.sign * theta_np, -self.sign * self.avg)
                         acc = self.score(
                             np.concatenate(data, axis=0),
                             np.concatenate(label),
@@ -681,6 +671,7 @@ def mainResults(
     run_dir: Optional[str] = None,
     seed: Optional[str] = None,
     run_id: Optional[str] = None,
+    save_orthogonal_directions=False,
     logger=None,
 ):
     """
@@ -796,9 +787,7 @@ def mainResults(
         )
         ccs_train_kwargs_names = ["n_epochs", "n_tries", "lr"]
         ccs_train_kwargs = {
-            k: train_kwargs[k]
-            for k in ccs_train_kwargs_names
-            if k in train_kwargs
+            k: train_kwargs[k] for k in ccs_train_kwargs_names if k in train_kwargs
         }
         classify_model.fit(data=data, label=labels, **ccs_train_kwargs)
     elif classification_method == "CCS+LR":
@@ -818,15 +807,15 @@ def mainResults(
             logger=logger,
         )
     elif classification_method == "CCS-in-LR-span":
-        if "num_orthogonal_dirs" not in train_kwargs:
+        if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
-                "num_orthogonal_dirs required for 'CCS-in-LR-span method."
+                "num_orthogonal_directions required for 'CCS-in-LR-span method."
             )
-        num_orthogonal_dirs = train_kwargs.pop("num_orthogonal_dirs")
+        num_orthogonal_directions = train_kwargs.pop("num_orthogonal_directions")
 
         # Use train_prefix for the labeled data and test_prefix for the
         # unlabeled data.
-        classify_model, fit_result = train_ccs_in_lr_span(
+        classify_model, fit_result, orthogonal_dirs = train_ccs_in_lr_span(
             data_dict,
             permutation_dict,
             train_data_dict,
@@ -834,13 +823,28 @@ def mainResults(
             projection_model,
             train_prefix,
             test_prefix,
-            num_orthogonal_dirs,
+            num_orthogonal_directions,
             mode,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
             logger=logger,
         )
+
+        if save_orthogonal_directions:
+            if run_dir is None:
+                raise ValueError("run_dir must be provided to save orthogonal dirs")
+            if seed is None:
+                raise ValueError("seed must be provided to save orthogonal dirs")
+            if run_id is None:
+                raise ValueError("run_id must be provided to save orthogonal dirs")
+
+            train_dir = load_utils.get_train_dir(run_dir)
+            if not os.path.exists(train_dir):
+                os.makedirs(train_dir)
+
+            save_path = os.path.join(train_dir, "orthogonal_directions.npy")
+            np.save(save_path, orthogonal_dirs)
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -879,9 +883,7 @@ def mainResults(
         )
 
         lr_train_kwargs = train_kwargs["log_reg"]
-        classify_model = LogisticRegressionClassifier(
-            n_jobs=1, **lr_train_kwargs
-        )
+        classify_model = LogisticRegressionClassifier(n_jobs=1, **lr_train_kwargs)
         if logger is not None:
             logger.info(f"Fitting LR model, mode={mode}")
         classify_model.fit(data, labels, mode)
@@ -896,9 +898,7 @@ def mainResults(
             split_pair=mode == "concat",
         )
 
-        classify_model = myClassifyModel(
-            classification_method, print_more=print_more
-        )
+        classify_model = myClassifyModel(classification_method, print_more=print_more)
         classify_model.fit(data, labels)
 
     eval_result = eval(
@@ -948,9 +948,7 @@ def eval(
     run_id: Optional[str] = None,
     logger=None,
 ):
-    if classification_method not in typing.get_args(
-        EvalClassificationMethodType
-    ):
+    if classification_method not in typing.get_args(EvalClassificationMethodType):
         raise ValueError(
             f"Unsupported classification method for eval: {classification_method}"
         )
@@ -1060,9 +1058,7 @@ def eval(
                     data, label, get_loss=True, get_probs=True
                 )
             if probs is None and not (p0 is None and p1 is None):
-                raise ValueError(
-                    "probs is None but p0 and p1 are not both None."
-                )
+                raise ValueError("probs is None but p0 and p1 are not both None.")
 
             # Arbitrarily set losses to 0 if the method does not provide them.
             losses = losses or (0.0, 0.0, 0.0)
@@ -1070,9 +1066,7 @@ def eval(
             if probs is not None:
                 probs = probs.flatten()
                 ece = metrics.expected_calibration_error(probs, label)[0]
-                ece_flip = metrics.expected_calibration_error(1 - probs, label)[
-                    0
-                ]
+                ece_flip = metrics.expected_calibration_error(1 - probs, label)[0]
 
                 if save_probs:
                     save_probs_file = load_utils.get_probs_save_path(
@@ -1130,9 +1124,5 @@ def printAcc(input_dic, verbose=1):
     global_acc = np.mean([100 * np.mean(w) for w in input_dic.values()])
     global_std = np.mean([100 * np.std(w) for w in input_dic.values()])
     if verbose >= 1:
-        print(
-            "## Global accuracy: {:.2f}, std.: {:.2f}".format(
-                global_acc, global_std
-            )
-        )
+        print("## Global accuracy: {:.2f}, std.: {:.2f}".format(global_acc, global_std))
     return global_acc
