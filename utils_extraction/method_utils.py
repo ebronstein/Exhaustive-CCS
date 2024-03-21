@@ -25,6 +25,7 @@ from utils_extraction.classifier import (
     project_coeff,
     train_ccs_in_lr_span,
     train_ccs_lr,
+    train_ccs_select_lr,
 )
 from utils_extraction.data_utils import getConcat, getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
@@ -33,7 +34,9 @@ from utils_extraction.projection import IdentityReduction, myReduction
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
 
-EvalClassificationMethodType = Literal["LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"]
+EvalClassificationMethodType = Literal[
+    "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR"
+]
 
 
 def is_method_unsupervised(method):
@@ -821,13 +824,13 @@ def mainResults(
             )
         if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
-                "num_orthogonal_directions required for 'CCS-in-LR-span method."
+                "num_orthogonal_directions required for CCS-in-LR-span method."
             )
         num_orthogonal_directions = train_kwargs.pop("num_orthogonal_directions")
 
         # Use train_prefix for the labeled data and test_prefix for the
         # unlabeled data.
-        classify_model, fit_result, orthogonal_dirs = train_ccs_in_lr_span(
+        classify_model, fit_result, orthogonal_dirs, intercepts = train_ccs_in_lr_span(
             data_dict,
             permutation_dict,
             train_data_dict,
@@ -845,19 +848,43 @@ def mainResults(
         )
 
         if save_orthogonal_directions:
-            if run_dir is None:
-                raise ValueError("run_dir must be provided to save orthogonal dirs")
-            if seed is None:
-                raise ValueError("seed must be provided to save orthogonal dirs")
-            if run_id is None:
-                raise ValueError("run_id must be provided to save orthogonal dirs")
+            load_utils.save_orthogonal_directions(
+                orthogonal_dirs, intercepts, run_dir, seed, run_id
+            )
+    elif classification_method == "CCS-select-LR":
+        if labeled_train_data_dict is None:
+            raise ValueError(
+                "labeled_train_data_dict must be provided for CCS-select-LR."
+            )
+        if "num_orthogonal_directions" not in train_kwargs:
+            raise ValueError(
+                "num_orthogonal_directions required for CCS-select-LR method."
+            )
+        num_orthogonal_directions = train_kwargs.pop("num_orthogonal_directions")
 
-            train_dir = load_utils.get_train_dir(run_dir)
-            if not os.path.exists(train_dir):
-                os.makedirs(train_dir)
+        # Use train_prefix for the labeled data and test_prefix for the
+        # unlabeled data.
+        classify_model, fit_result, orthogonal_dirs, intercepts = train_ccs_select_lr(
+            data_dict,
+            permutation_dict,
+            train_data_dict,
+            labeled_train_data_dict,
+            projection_model,
+            train_prefix,
+            test_prefix,
+            num_orthogonal_directions,
+            mode,
+            load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
+            train_kwargs=train_kwargs,
+            project_along_mean_diff=project_along_mean_diff,
+            device=device,
+            logger=logger,
+        )
 
-            save_path = os.path.join(train_dir, "orthogonal_directions.npy")
-            np.save(save_path, orthogonal_dirs)
+        if save_orthogonal_directions:
+            load_utils.save_orthogonal_directions(
+                orthogonal_dirs, intercepts, run_dir, seed, run_id
+            )
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -1043,7 +1070,7 @@ def eval(
                 split_pair=split_pair,
             )
 
-            if classification_method in ["CCS+LR", "CCS-in-LR-span"]:
+            if classification_method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
                 device = classify_model.device
                 x0, x1 = data
                 x0 = torch.tensor(x0, device=device)

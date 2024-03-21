@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 
 from utils.types import (
@@ -19,6 +20,7 @@ from utils.types import (
     PrefixDataDictType,
     PromptIndicesDictType,
 )
+from utils_extraction import load_utils
 from utils_extraction.data_utils import getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
 from utils_extraction.projection import myReduction
@@ -154,6 +156,21 @@ class ContrastPairClassifier(nn.Module):
             self.orthogonal_dirs = None
             self.span_dirs = None
 
+    def set_params(self, coef: np.ndarray, intercept: np.ndarray):
+        coef = torch.tensor(coef, dtype=torch.float32, device=self.device).reshape(
+            1, -1
+        )
+        if coef.shape != self.linear.weight.shape:
+            raise ValueError(
+                f"Expected coef shape {self.linear.weight.shape}, got {coef.shape}"
+            )
+        intercept = torch.tensor(
+            intercept, dtype=torch.float32, device=self.device
+        ).reshape(1)
+        self.linear.weight = nn.Parameter(coef)
+        if self.include_bias:
+            self.linear.bias = nn.Parameter(intercept)
+
     def project_params(self, directions: torch.Tensor):
         # directions shape: [input_dim, n_directions]
         with torch.no_grad():
@@ -175,6 +192,37 @@ class ContrastPairClassifier(nn.Module):
         probs = torch.sigmoid(logits)
         return probs
 
+    def compute_supervised_loss(
+        self, sup_x0: torch.Tensor, sup_x1: torch.Tensor, sup_y: torch.Tensor
+    ) -> OrderedDict:
+        bce_loss_0 = F.binary_cross_entropy(self.predict(sup_x0), 1 - sup_y)
+        bce_loss_1 = F.binary_cross_entropy(self.predict(sup_x1), sup_y)
+        supervised_loss = 0.5 * (bce_loss_0 + bce_loss_1)
+        return OrderedDict(
+            [
+                ("supervised_loss", supervised_loss),
+                ("bce_loss_0", bce_loss_0),
+                ("bce_loss_1", bce_loss_1),
+            ]
+        )
+
+    def compute_unsupervised_loss(
+        self, unsup_x0: torch.Tensor, unsup_x1: torch.Tensor
+    ) -> OrderedDict:
+        unsup_prob_0 = self.predict(unsup_x0)
+        unsup_prob_1 = self.predict(unsup_x1)
+        consistency_loss = ((unsup_prob_0 - (1 - unsup_prob_1)) ** 2).mean()
+        confidence_loss = torch.min(unsup_prob_0, unsup_prob_1).pow(2).mean()
+        unsupervised_loss = consistency_loss + confidence_loss
+
+        return OrderedDict(
+            [
+                ("unsupervised_loss", unsupervised_loss),
+                ("consistency_loss", consistency_loss),
+                ("confidence_loss", confidence_loss),
+            ]
+        )
+
     def compute_loss(
         self,
         sup_x0: torch.Tensor,
@@ -186,15 +234,8 @@ class ContrastPairClassifier(nn.Module):
         sup_weight=1.0,
         # l2_weight=0.0,
     ) -> OrderedDict:
-        bce_loss_0 = nn.BCELoss()(self.predict(sup_x0), 1 - sup_y)
-        bce_loss_1 = nn.BCELoss()(self.predict(sup_x1), sup_y)
-        supervised_loss = 0.5 * (bce_loss_0 + bce_loss_1)
-
-        unsup_prob_0 = self.predict(unsup_x0)
-        unsup_prob_1 = self.predict(unsup_x1)
-        consistency_loss = ((unsup_prob_0 - (1 - unsup_prob_1)) ** 2).mean()
-        confidence_loss = torch.min(unsup_prob_0, unsup_prob_1).pow(2).mean()
-        unsupervised_loss = consistency_loss + confidence_loss
+        supervised_loss_dict = self.compute_supervised_loss(sup_x0, sup_x1, sup_y)
+        unsupervised_loss_dict = self.compute_unsupervised_loss(unsup_x0, unsup_x1)
 
         # L2 regularization loss.
         # l2_reg_loss = torch.tensor(0.0).to(self.device)
@@ -202,23 +243,16 @@ class ContrastPairClassifier(nn.Module):
         #     l2_reg_loss += torch.norm(param) ** 2
 
         total_loss = (
-            sup_weight * supervised_loss
-            + unsup_weight * unsupervised_loss
+            sup_weight * supervised_loss_dict["supervised_loss"]
+            + unsup_weight * unsupervised_loss_dict["unsupervised_loss"]
             # + l2_weight * l2_reg_loss
         )
 
-        return OrderedDict(
-            [
-                ("total_loss", total_loss),
-                ("supervised_loss", supervised_loss),
-                ("unsupervised_loss", unsupervised_loss),
-                # ("l2_reg_loss", l2_reg_loss),
-                ("bce_loss_0", bce_loss_0),
-                ("bce_loss_1", bce_loss_1),
-                ("consistency_loss", consistency_loss),
-                ("confidence_loss", confidence_loss),
-            ]
-        )
+        loss_dict = OrderedDict([("total_loss", total_loss)])
+        loss_dict.update(supervised_loss_dict)
+        loss_dict.update(unsupervised_loss_dict)
+
+        return loss_dict
 
     def train_model(
         self,
@@ -512,6 +546,7 @@ def train_orthogonal_lr_probes(
     cur_train_sup_x0 = train_sup_x0.copy()
     cur_train_sup_x1 = train_sup_x1.copy()
     orthogonal_dirs = []
+    intercepts = []
     lr_fit_results = []
 
     for i in range(num_orthogonal_directions):
@@ -523,6 +558,7 @@ def train_orthogonal_lr_probes(
         orth_dir = lr_model.coef_ / np.linalg.norm(lr_model.coef_)
         orth_dir = orth_dir.squeeze(0)
         orthogonal_dirs.append(orth_dir)
+        intercepts.append(lr_model.intercept_)
 
         # Eval
         fit_result = {}
@@ -554,7 +590,7 @@ def train_orthogonal_lr_probes(
 
     orthogonal_dirs = np.array(orthogonal_dirs).T
 
-    return orthogonal_dirs, lr_fit_results
+    return orthogonal_dirs, intercepts, lr_fit_results
 
 
 def train_ccs_in_lr_span(
@@ -572,7 +608,7 @@ def train_ccs_in_lr_span(
     project_along_mean_diff=False,
     device="cuda",
     logger=None,
-) -> tuple[ContrastPairClassifier, dict, np.ndarray]:
+) -> tuple[ContrastPairClassifier, dict, np.ndarray, np.ndarray]:
     """Train CCS in span of LR directions.
 
     Args:
@@ -623,19 +659,12 @@ def train_ccs_in_lr_span(
 
     # Load the orthogonal directions if provided. Otherwise, train them.
     if load_orthogonal_directions_run_dir is not None:
-        orthogonal_dirs_path = Path(load_orthogonal_directions_run_dir, "train/orthogonal_directions.npy")
-        if not os.path.exists(orthogonal_dirs_path):
-            raise ValueError(f"File not found: {orthogonal_dirs_path}")
-        orthogonal_dirs = np.load(orthogonal_dirs_path)
-
-        fit_result_path = Path(load_orthogonal_directions_run_dir, "train").glob("fit_result*.json")
-        fit_result_path = list(fit_result_path)
-        if len(fit_result_path) != 1:
-            raise ValueError(f"Expected 1 fit result file, found {len(fit_result_path)}")
-        with open(fit_result_path[0], "r") as f:
-            lr_fit_results = json.load(f)
+        orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
+            load_orthogonal_directions_run_dir
+        )
+        lr_fit_results = []
     else:
-        orthogonal_dirs, lr_fit_results = train_orthogonal_lr_probes(
+        orthogonal_dirs, intercepts, lr_fit_results = train_orthogonal_lr_probes(
             train_sup_x0,
             train_sup_x1,
             train_sup_y,
@@ -691,7 +720,204 @@ def train_ccs_in_lr_span(
     if load_orthogonal_directions_run_dir is None:
         final_fit_result["lr_fit_results"] = lr_fit_results
 
-    return best_probe, final_fit_result, orthogonal_dirs
+    return best_probe, final_fit_result, orthogonal_dirs, intercepts
+
+
+def train_ccs_select_lr(
+    data_dict: PrefixDataDictType,
+    permutation_dict: PermutationDictType,
+    unlabeled_train_data_dict: PromptIndicesDictType,
+    labeled_train_data_dict: PromptIndicesDictType,
+    projection_model: myReduction,
+    labeled_prefix: str,
+    unlabeled_prefix: str,
+    num_orthogonal_directions: int,
+    mode: Mode,
+    load_orthogonal_directions_run_dir: Optional[str] = None,
+    train_kwargs={},
+    project_along_mean_diff=False,
+    device="cuda",
+    logger=None,
+) -> tuple[ContrastPairClassifier, dict, np.ndarray, np.ndarray]:
+    """Choose LR direction with the lowest CCS loss.
+
+    Args:
+        TODO
+        load_orthogonal_directions_run_dir: Run directory from which to load the
+            orthogonal directions. If provided, expects the file
+            "{load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy"
+            to exist.
+
+    Returns:
+        best_probe: The best probe.
+        final_fit_result: The fit result of the CCS and LR probes.
+        orthogonal_dirs: The orthogonal directions found by LR with shape
+            [hidden_dim, n_directions].
+    """
+    # Labeled data.
+    sup_data_kwargs = dict(
+        target_dict=labeled_train_data_dict,
+        data_dict=data_dict[labeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
+        split="train",
+        **sup_data_kwargs,
+    )
+    (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
+        split="test",
+        **sup_data_kwargs,
+    )
+    # Unlabeled data.
+    unsup_data_kwargs = dict(
+        target_dict=unlabeled_train_data_dict,
+        data_dict=data_dict[unlabeled_prefix],
+        permutation_dict=permutation_dict,
+        projection_model=projection_model,
+        project_along_mean_diff=project_along_mean_diff,
+    )
+    (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
+        split="train", **unsup_data_kwargs
+    )
+    (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
+        split="test", **unsup_data_kwargs
+    )
+
+    lr_train_kwargs = train_kwargs.pop("log_reg", {})
+
+    # Load the orthogonal directions if provided. Otherwise, train them.
+    if load_orthogonal_directions_run_dir is not None:
+        orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
+            load_orthogonal_directions_run_dir
+        )
+        lr_fit_results = []
+    else:
+        orthogonal_dirs, intercepts, lr_fit_results = train_orthogonal_lr_probes(
+            train_sup_x0,
+            train_sup_x1,
+            train_sup_y,
+            test_sup_x0,
+            test_sup_x1,
+            test_sup_y,
+            train_unsup_x0,
+            train_unsup_x1,
+            train_unsup_y,
+            test_unsup_x0,
+            test_unsup_x1,
+            test_unsup_y,
+            num_orthogonal_directions,
+            mode,
+            train_kwargs=lr_train_kwargs,
+            logger=logger,
+        )
+
+    # Convert to tensors for CCS loss computation.
+    train_sup_x0 = torch.tensor(train_sup_x0, dtype=torch.float, device=device)
+    train_sup_x1 = torch.tensor(train_sup_x1, dtype=torch.float, device=device)
+    train_sup_y = torch.tensor(train_sup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
+    train_unsup_x0 = torch.tensor(train_unsup_x0, dtype=torch.float, device=device)
+    train_unsup_x1 = torch.tensor(train_unsup_x1, dtype=torch.float, device=device)
+    train_unsup_y = torch.tensor(train_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
+    test_sup_x0 = torch.tensor(test_sup_x0, dtype=torch.float, device=device)
+    test_sup_x1 = torch.tensor(test_sup_x1, dtype=torch.float, device=device)
+    test_sup_y = torch.tensor(test_sup_y, dtype=torch.float, device=device).view(-1, 1)
+    test_unsup_x0 = torch.tensor(test_unsup_x0, dtype=torch.float, device=device)
+    test_unsup_x1 = torch.tensor(test_unsup_x1, dtype=torch.float, device=device)
+    test_unsup_y = torch.tensor(test_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
+
+    train_kwargs_names = [
+        "n_tries",
+        "n_epochs",
+        "lr",
+        "opt",
+    ]
+    ccs_train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+    }
+    ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
+
+    train_unlabeled_losses = defaultdict(list)
+    test_unlabeled_losses = defaultdict(list)
+    train_labeled_losses = defaultdict(list)
+    test_labeled_losses = defaultdict(list)
+    for orthogonal_dir, intercept in zip(orthogonal_dirs.T, intercepts):
+        classifier = ContrastPairClassifier(
+            input_dim=train_sup_x1.shape[1],
+            include_bias=True,
+            device=device,
+            verbose=True,
+        )
+        classifier.set_params(orthogonal_dir, intercept)
+        # CCS loss on the unlabeled train set.
+        train_unlabeled_loss_dict = classifier.compute_unsupervised_loss(
+            train_unsup_x0,
+            train_unsup_x1,
+        )
+        for k, v in train_unlabeled_loss_dict.items():
+            train_unlabeled_losses[k].append(v.item())
+        # CCS loss on the unlabeled test set.
+        test_unlabeled_loss_dict = classifier.compute_unsupervised_loss(
+            test_unsup_x0,
+            test_unsup_x1,
+        )
+        for k, v in test_unlabeled_loss_dict.items():
+            test_unlabeled_losses[k].append(v.item())
+        # CCS loss on the labeled train set.
+        train_labeled_loss_dict = classifier.compute_unsupervised_loss(
+            train_sup_x0,
+            train_sup_x1,
+        )
+        for k, v in train_labeled_loss_dict.items():
+            train_labeled_losses[k].append(v.item())
+        # CCS loss on the labeled test set.
+        test_labeled_loss_dict = classifier.compute_unsupervised_loss(
+            test_sup_x0,
+            test_sup_x1,
+        )
+        for k, v in test_labeled_loss_dict.items():
+            test_labeled_losses[k].append(v.item())
+
+    # Choose the direction with the lowest CCS loss on the unlabeled combined
+    # train and test sets. Scale the train and test losses by the number of
+    # examples in each set.
+    unlabeled_losses = train_unsup_y.shape[0] * np.array(
+        train_unlabeled_losses["unsupervised_loss"]
+    ) + test_unsup_y.shape[0] * np.array(test_unlabeled_losses["unsupervised_loss"])
+    best_orthogonal_dir_idx = int(np.argmin(unlabeled_losses))
+    best_orthogonal_dir = orthogonal_dirs[:, best_orthogonal_dir_idx]
+    best_intercept = float(intercepts[best_orthogonal_dir_idx])
+    best_classifier = ContrastPairClassifier(
+        input_dim=train_sup_x1.shape[1],
+        include_bias=True,
+        device=device,
+        verbose=True,
+    )
+    best_classifier.set_params(best_orthogonal_dir, best_intercept)
+
+    # Make the fit result.
+    fit_result = {
+        "best_idx": best_orthogonal_dir_idx,
+        "train_unlabeled_losses": train_unlabeled_losses,
+        "test_unlabeled_losses": test_unlabeled_losses,
+        "train_labeled_losses": train_labeled_losses,
+        "test_labeled_losses": test_labeled_losses,
+    }
+    breakpoint()
+
+    # Add the orthogonal directions to the final fit result if they were trained
+    # in this run.
+    if load_orthogonal_directions_run_dir is None:
+        fit_result["lr_fit_results"] = lr_fit_results
+
+    return best_classifier, fit_result, orthogonal_dirs, intercepts
 
 
 def train_ccs_lr(

@@ -62,19 +62,10 @@ PrefixType = Literal[
 ]
 
 MethodType = Literal[
-    "0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span"
+    "0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR"
 ]
 
 ex = Experiment()
-
-
-def methodHasLoss(method):
-    return method in [
-        "BSS",
-        "CCS",
-        "CCS+LR",
-        "CCS-in-LR-span",
-    ] or method.startswith("RCCS")
 
 
 def get_method_str(method: str) -> str:
@@ -87,7 +78,7 @@ def get_project_along_mean_diff(method: str, project_along_mean_diff: bool) -> b
 
 def method_uses_concat_hs_mode(method: str) -> bool:
     return (
-        method in ("CCS", "CCS+LR", "CCS-in-LR-span", "Random")
+        method in ("CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR", "Random")
     ) or method.startswith("RCCS")
 
 
@@ -148,7 +139,7 @@ def sacred_config():
     # Saving
     save_dir = "extraction_results"
     save_fit_result: bool = True
-    save_fit_plots: bool = True
+    save_fit_plots: bool = False
     save_states: bool = True
     save_params = True
     save_results: bool = True
@@ -563,12 +554,10 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                     coef = np.concatenate([constraints, coef], axis=0)
                     bias = np.concatenate([old_biases, bias], axis=0)
             # TODO: save CSS+LR using torch.save.
-            elif method == "CSS+LR":
-                raise NotImplementedError()
-            elif method == "CCS-in-LR-span":
+            elif method in ["CSS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
                 raise NotImplementedError()
             else:
-                assert False
+                raise ValueError(f"Invalid method: {method}")
 
             save_params(
                 save_params_dir,
@@ -584,7 +573,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         # TODO: standardize losses
         # Mean losses over all eval datasets and all prompts.
-        if method in ["CCS+LR", "CCS-in-LR-span"]:
+        if method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
             loss_names = list(loss_dict[list(loss_dict.keys())[0]][0].keys())
             mean_losses = {}
             for loss_name in loss_names:
@@ -653,7 +642,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if not loss_dict:
                     continue
 
-                if method in ["CCS+LR", "CCS-in-LR-span"]:
+                if method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
                     for loss_name, loss in loss_dict[test_set][prompt_idx].items():
                         eval_result[loss_name] = loss
                 elif "CCS" in method:

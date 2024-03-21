@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
@@ -91,9 +92,7 @@ def load_params(
             f"No params found in {run_dir} for method={method}, prefix={prefix}"
         )
     coef = np.load(coef_path)
-    intercept = (
-        np.load(intercept_path) if os.path.exists(intercept_path) else None
-    )
+    intercept = np.load(intercept_path) if os.path.exists(intercept_path) else None
     return coef, intercept
 
 
@@ -177,9 +176,7 @@ def parse_generation_dir(
     if len(parts) != 6:
         return None
 
-    short_model_name, dataset, num_examples, prompt_idx, confusion, location = (
-        parts
-    )
+    short_model_name, dataset, num_examples, prompt_idx, confusion, location = parts
     prompt_idx = int(prompt_idx.replace("prompt", ""))
     num_examples = int(num_examples)
     return (
@@ -204,9 +201,7 @@ def get_hidden_states_dirs(
     target_short_model_name = get_model_short_name(mdl)
     gen_dirs = []
     subdirs = [
-        d
-        for d in os.listdir(load_dir)
-        if os.path.isdir(os.path.join(load_dir, d))
+        d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))
     ]
     for gen_dir in subdirs:
         parts = parse_generation_dir(gen_dir)
@@ -400,9 +395,7 @@ def load_hidden_states_for_datasets(
             )
         )
     prompt_dict = (
-        prompt_dict
-        if prompt_dict is not None
-        else {key: None for key in dataset_list}
+        prompt_dict if prompt_dict is not None else {key: None for key in dataset_list}
     )
     data_dict = {
         set_name: load_hidden_states(
@@ -452,9 +445,7 @@ def get_zeros_acc(
     """
     zeros = pd.read_csv(os.path.join(load_dir, csv_name + ".csv"))
     zeros.dropna(subset=["calibrated"], inplace=True)
-    subzeros = zeros.loc[
-        (zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)
-    ]
+    subzeros = zeros.loc[(zeros["model"] == mdl_name) & (zeros["prefix"] == prefix)]
 
     # Extend prompt_dict to ALL dict if it is None
     if prompt_dict is None:
@@ -500,3 +491,56 @@ def maximum_existing_run_id(basedir: str, with_params: bool = True) -> int:
         return max(dir_nrs)
     else:
         return 0
+
+
+def load_orthogonal_directions(run_dir: str) -> tuple[np.ndarray, np.ndarray]:
+    train_dir = Path(run_dir, "train")
+    orthogonal_dirs_path = train_dir / "orthogonal_directions.npy"
+    if not orthogonal_dirs_path.exists():
+        raise ValueError(f"File not found: {orthogonal_dirs_path}")
+    orthogonal_dirs = np.load(orthogonal_dirs_path)
+
+    intercepts_path = train_dir / "intercepts.npy"
+    if not intercepts_path.exists():
+        raise ValueError(f"File not found: {intercepts_path}")
+    intercepts = np.load(intercepts_path)
+    if intercepts.shape[0] != orthogonal_dirs.shape[1]:
+        raise ValueError(
+            f"Expected the same number of intercepts as orthogonal directions, "
+            f"got {intercepts.shape[0]} intercepts and {orthogonal_dirs.shape[1]} "
+            "orthogonal directions."
+        )
+
+    return orthogonal_dirs, intercepts
+
+
+def load_fit_result(run_dir: str) -> list[dict]:
+    fit_result_paths = Path(run_dir, "train").glob("fit_result*.json")
+    results = []
+    for path in fit_result_paths:
+        with open(path, "r") as f:
+            results.append(json.load(f))
+
+    return results
+
+
+def save_orthogonal_directions(
+    orthogonal_dirs: np.ndarray,
+    intercepts: np.ndarray,
+    run_dir: str,
+    seed: int,
+    run_id: int,
+):
+    if run_dir is None:
+        raise ValueError("run_dir must be provided to save orthogonal dirs")
+    if seed is None:
+        raise ValueError("seed must be provided to save orthogonal dirs")
+    if run_id is None:
+        raise ValueError("run_id must be provided to save orthogonal dirs")
+
+    train_dir = get_train_dir(run_dir)
+    if not os.path.exists(train_dir):
+        os.makedirs(train_dir)
+
+    np.save(os.path.join(train_dir, "orthogonal_directions.npy"), orthogonal_dirs)
+    np.save(os.path.join(train_dir, "intercepts.npy"), intercepts)
