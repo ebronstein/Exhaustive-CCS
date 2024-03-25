@@ -210,7 +210,7 @@ class ConsistencyMethod(object):
 
     def train(self):
         """
-        Does a single training run of nepochs epochs
+        Does a single training run of n_epochs epochs
         """
 
         # convert to tensors
@@ -254,7 +254,7 @@ class ConsistencyMethod(object):
         optimizer = torch.optim.AdamW([theta], lr=self.lr)
 
         # Start training (full batch)
-        for _ in range(self.nepochs):
+        for _ in range(self.n_epochs):
 
             # project onto theta
             theta_ = project_coeff(theta, constraints_t)
@@ -301,7 +301,7 @@ class ConsistencyMethod(object):
         self,
         data: tuple[np.ndarray, np.ndarray],
         label: np.ndarray,
-        nepochs=1000,
+        n_epochs=1000,
         n_tries=10,
         lr=1e-2,
         init_theta=None,
@@ -311,7 +311,7 @@ class ConsistencyMethod(object):
         Does n_tries attempts at training, with different random initializations
         """
 
-        self.nepochs = nepochs
+        self.n_epochs = n_epochs
         self.n_tries = n_tries
         self.lr = lr
 
@@ -323,8 +323,8 @@ class ConsistencyMethod(object):
 
         if self.verbose:
             print(
-                "String fiting data with Prob. nepochs: {}, n_tries: {}, lr: {}".format(
-                    nepochs, n_tries, lr
+                "String fiting data with Prob. n_epochs: {}, n_tries: {}, lr: {}".format(
+                    n_epochs, n_tries, lr
                 )
             )
         # set up the best loss and best theta found so far
@@ -782,7 +782,7 @@ def mainResults(
     if classification_method == "CCS":
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
-            data_dict=data_dict,
+            data_dict=train_prefix_data_dict,
             permutation_dict=permutation_dict,
             projection_model=projection_model,
             split="train",
@@ -914,7 +914,7 @@ def mainResults(
     elif classification_method == "LR":
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
-            data_dict=data_dict,
+            data_dict=train_prefix_data_dict,
             permutation_dict=permutation_dict,
             projection_model=projection_model,
             split="train",
@@ -930,7 +930,7 @@ def mainResults(
     else:
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
-            data_dict=data_dict,
+            data_dict=train_prefix_data_dict,
             permutation_dict=permutation_dict,
             projection_model=projection_model,
             split="train",
