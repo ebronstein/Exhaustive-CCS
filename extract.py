@@ -166,7 +166,10 @@ def sacred_config():
     exp_dir = load_utils.get_exp_dir(
         save_dir, name, model, datasets, seed, labeled_datasets=labeled_datasets
     )
-    ex.observers.append(FileStorageObserver(exp_dir, copy_sources=False))
+    # NOTE: set the observers to this single FileStorageObserver instead of
+    # appending to ex.observers. This allows running the experiment multiple
+    # times without creating multiple observers.
+    ex.observers = [FileStorageObserver(exp_dir, copy_sources=False)]
 
 
 def _convert_dogmatics_to_standard(obj: Any) -> Any:
