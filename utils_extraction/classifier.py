@@ -31,14 +31,29 @@ ContrastPair = tuple[torch.Tensor, torch.Tensor]
 
 
 def normalize(directions):
-    # directions shape: [input_dim, n_directions]
-    return directions / np.linalg.norm(directions, axis=0, keepdims=True)
+    """Normalize the directions.
+
+    Args:
+        directions: The directions to normalize. Shape: [n_directions, input_dim].
+
+    Returns:
+        The normalized directions.
+    """
+    return directions / np.linalg.norm(directions, axis=1, keepdims=True)
 
 
 def assert_close_to_orthonormal(directions, atol=1e-3):
-    # directions shape: [input_dim, n_directions]
+    """Assert that the directions are close to orthonormal.
+
+    Args:
+        directions: The directions to check. Shape: [input_dim, n_directions].
+        atol: The absolute tolerance for the check.
+
+    Raises:
+        AssertionError: If the directions are not close to orthonormal.
+    """
     assert np.allclose(
-        directions.T @ directions, np.eye(directions.shape[1]), atol=atol
+        directions @ directions.T, np.eye(directions.shape[0]), atol=atol
     ), f"{directions} not orthonormal"
 
 
@@ -86,19 +101,43 @@ def project_data_along_axis(data, labels):
 
 
 def process_directions(directions: np.ndarray, input_dim: int) -> np.ndarray:
-    if directions.ndim == 1:
-        directions = directions[:, None]
-    elif directions.ndim != 2:
+    if directions.ndim != 2:
         raise ValueError("Directions should have 2 dimensions.")
 
-    if directions.shape[0] != input_dim:
+    if directions.shape[1] != input_dim:
         raise ValueError(
-            "Directions should have the same number of columns as input_dim."
+            "Directions should have the same number of columns as input_dim. "
+            f"Directions shape: {directions.shape}, input_dim: {input_dim}"
         )
 
     directions = normalize(directions)
     assert_close_to_orthonormal(directions)
     return directions
+
+
+def make_coef_bias(
+    input_dim: int, include_bias: bool, device: str
+) -> tuple[nn.Parameter, Optional[nn.Parameter]]:
+    """Make the coefficients and bias for the classifier.
+
+    Args:
+        input_dim: The input dimension.
+        include_bias: Whether to include a bias term.
+        device: The device to use.
+
+    Returns:
+        coef: The coefficients with shape [1, input_dim].
+        bias: The bias term with shape [1] if `include_bias`, otherwise None.
+    """
+    init_min = -1 / np.sqrt(input_dim)
+    coef = torch.FloatTensor(1, input_dim).uniform_(init_min, -init_min)
+    coef = nn.Parameter(coef.to(device))
+    if include_bias:
+        bias = torch.FloatTensor(1).uniform_(init_min, -init_min)
+        bias = nn.Parameter(bias.to(device))
+    else:
+        bias = None
+    return coef, bias
 
 
 class ContrastPairClassifier(nn.Module):
@@ -113,10 +152,17 @@ class ContrastPairClassifier(nn.Module):
     ):
         """CCS and LR classifier.
 
+        TODO: complete docstring.
+
         Args:
             input_dim: Input dimension.
-            orthogonal_dirs: [input_dim, n_directions]
-            span_dirs: [input_dim, n_directions]
+            orthogonal_dirs: [n_directions, input_dim]
+            span_dirs: [n_directions, input_dim]
+
+        Attributes:
+            coef: [1, input_dim] if orthogonal_dirs and span_dirs is None,
+                otherwise [1, n_directions].
+            bias: [1] or None
         """
         super(ContrastPairClassifier, self).__init__()
         self.input_dim = input_dim
@@ -135,60 +181,60 @@ class ContrastPairClassifier(nn.Module):
                 "orthogonal_dirs",
                 torch.tensor(orthogonal_dirs, dtype=torch.float32).to(device),
             )
-            self.linear = nn.Linear(input_dim, 1, bias=include_bias).to(device)
             self.project_params(self.orthogonal_dirs)
-
+            self.coef, self.bias = make_coef_bias(input_dim, include_bias, device)
             self.span_dirs = None
         elif span_dirs is not None:
-            if self.include_bias:
-                raise ValueError("Cannot include bias if span_dirs is provided.")
-
             span_dirs = process_directions(span_dirs, input_dim)
             self.register_buffer(
                 "span_dirs",
                 torch.tensor(span_dirs, dtype=torch.float32).to(device),
             )
-            self.linear = nn.Linear(span_dirs.shape[1], 1, bias=False).to(device)
-
+            self.coef, self.bias = make_coef_bias(
+                span_dirs.shape[0], include_bias, device
+            )
             self.orthogonal_dirs = None
         else:
-            self.linear = nn.Linear(input_dim, 1, bias=include_bias).to(device)
+            self.coef, self.bias = make_coef_bias(input_dim, include_bias, device)
             self.orthogonal_dirs = None
             self.span_dirs = None
 
-    def set_params(self, coef: np.ndarray, intercept: np.ndarray):
+    def set_params(self, coef: np.ndarray, bias: Optional[np.ndarray]):
+        if bias is not None and self.bias is None:
+            raise ValueError("Bias is not included in the model.")
+
         coef = torch.tensor(coef, dtype=torch.float32, device=self.device).reshape(
             1, -1
         )
-        if coef.shape != self.linear.weight.shape:
-            raise ValueError(
-                f"Expected coef shape {self.linear.weight.shape}, got {coef.shape}"
+        if coef.shape != self.coef.shape:
+            raise ValueError(f"Expected coef shape {self.coef.shape}, got {coef.shape}")
+        self.coef = nn.Parameter(coef)
+        if bias is not None:
+            bias = torch.tensor(bias, dtype=torch.float32, device=self.device).reshape(
+                1
             )
-        intercept = torch.tensor(
-            intercept, dtype=torch.float32, device=self.device
-        ).reshape(1)
-        self.linear.weight = nn.Parameter(coef)
-        if self.include_bias:
-            self.linear.bias = nn.Parameter(intercept)
+            self.bias = nn.Parameter(bias)
 
     def project_params(self, directions: torch.Tensor):
+        """Project `directions` out of the model parameters (coefficients)."""
         # directions shape: [input_dim, n_directions]
         with torch.no_grad():
-            params = self.linear.weight  # [1, input_dim]
+            params = self.coef  # [1, input_dim]
             # [1, n_directions]
             inner_products = torch.matmul(params, directions)
             # [1, input_dim]
             proj_params = params - torch.matmul(
                 inner_products, directions.permute(1, 0)
             )
-            self.linear.weight = nn.Parameter(proj_params)
+            self.coef = nn.Parameter(proj_params)
 
     def predict(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.to(self.device)
+        x = x.to(self.device)  # [N, input_dim]
         if self.span_dirs is not None:
-            logits = torch.matmul(x, self.linear(self.span_dirs))
+            lin_combo = torch.matmul(self.coef, self.span_dirs)  # [1, input_dim]
+            logits = torch.matmul(x, lin_combo.t())  # [N, 1]
         else:
-            logits = self.linear(x)
+            logits = torch.matmul(x, self.coef.t())  # [N, 1]
         probs = torch.sigmoid(logits)
         return probs
 
@@ -238,9 +284,9 @@ class ContrastPairClassifier(nn.Module):
         unsupervised_loss_dict = self.compute_unsupervised_loss(unsup_x0, unsup_x1)
 
         # L2 regularization loss.
-        # l2_reg_loss = torch.tensor(0.0).to(self.device)
-        # for param in self.linear.parameters():
-        #     l2_reg_loss += torch.norm(param) ** 2
+        # l2_reg_loss = torch.norm(self.coef) ** 2
+        # if self.bias is not None:
+        #     l2_reg_loss += torch.norm(self.bias) ** 2
 
         total_loss = (
             sup_weight * supervised_loss_dict["supervised_loss"]
@@ -347,9 +393,9 @@ class ContrastPairClassifier(nn.Module):
                     f"Epoch {epoch+1}/{n_epochs}, Loss: {train_losses['total_loss'].item()}"
                 )
 
-            train_history["weight_norm"].append(self.linear.weight.norm().item())
+            train_history["coef_norm"].append(self.coef.norm().item())
             if self.include_bias:
-                train_history["bias"].append(self.linear.bias.item())
+                train_history["bias"].append(self.bias.item())
 
         return train_history, eval_history
 
@@ -542,6 +588,17 @@ def train_orthogonal_lr_probes(
     train_kwargs=None,
     logger=None,
 ):
+    """Trains orthogonal directions using logistic regression.
+
+    Args:
+        TODO
+
+    Returns:
+        orthogonal_dirs: The orthogonal directions found by LR with shape
+            [n_directions, hidden_dim].
+        intercepts: The intercepts found by LR with shape [n_directions].
+        lr_fit_results: The fit results of the LR probes.
+    """
     train_kwargs = train_kwargs or {}
     cur_train_sup_x0 = train_sup_x0.copy()
     cur_train_sup_x1 = train_sup_x1.copy()
@@ -588,7 +645,7 @@ def train_orthogonal_lr_probes(
         assert np.abs(cur_train_sup_x0 @ orth_dir).max() < 1e-4
         assert np.abs(cur_train_sup_x1 @ orth_dir).max() < 1e-4
 
-    orthogonal_dirs = np.array(orthogonal_dirs).T
+    orthogonal_dirs = np.array(orthogonal_dirs)
 
     return orthogonal_dirs, intercepts, lr_fit_results
 
@@ -622,7 +679,7 @@ def train_ccs_in_lr_span(
         best_probe: The best probe.
         final_fit_result: The fit result of the CCS and LR probes.
         orthogonal_dirs: The orthogonal directions found by LR with shape
-            [hidden_dim, n_directions].
+            [n_directions, hidden_dim].
     """
     # Labeled data.
     sup_data_kwargs = dict(
@@ -756,7 +813,7 @@ def train_ccs_select_lr(
         best_probe: The best probe.
         final_fit_result: The fit result of the CCS and LR probes.
         orthogonal_dirs: The orthogonal directions found by LR with shape
-            [hidden_dim, n_directions].
+            [n_directions, hidden_dim].
     """
     # Labeled data.
     sup_data_kwargs = dict(
@@ -797,13 +854,13 @@ def train_ccs_select_lr(
         orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
             load_orthogonal_directions_run_dir
         )
-        if num_orthogonal_directions > orthogonal_dirs.shape[1]:
+        if num_orthogonal_directions > orthogonal_dirs.shape[0]:
             raise ValueError(
                 f"num_orthogonal_directions ({num_orthogonal_directions}) is "
                 "greater than the number of orthogonal directions found by LR "
-                f"({orthogonal_dirs.shape[1]})."
+                f"({orthogonal_dirs.shape[0]})."
             )
-        orthogonal_dirs = orthogonal_dirs[:, :num_orthogonal_directions]
+        orthogonal_dirs = orthogonal_dirs[:num_orthogonal_directions]
         lr_fit_results = []
     else:
         orthogonal_dirs, intercepts, lr_fit_results = train_orthogonal_lr_probes(
@@ -860,7 +917,7 @@ def train_ccs_select_lr(
     test_unlabeled_losses = defaultdict(list)
     train_labeled_losses = defaultdict(list)
     test_labeled_losses = defaultdict(list)
-    for orthogonal_dir, intercept in zip(orthogonal_dirs.T, intercepts):
+    for orthogonal_dir, intercept in zip(orthogonal_dirs, intercepts):
         classifier = ContrastPairClassifier(
             input_dim=train_sup_x1.shape[1],
             include_bias=True,
@@ -904,7 +961,7 @@ def train_ccs_select_lr(
         train_unlabeled_losses["unsupervised_loss"]
     ) + test_unsup_y.shape[0] * np.array(test_unlabeled_losses["unsupervised_loss"])
     best_orthogonal_dir_idx = int(np.argmin(unlabeled_losses))
-    best_orthogonal_dir = orthogonal_dirs[:, best_orthogonal_dir_idx]
+    best_orthogonal_dir = orthogonal_dirs[best_orthogonal_dir_idx]
     best_intercept = float(intercepts[best_orthogonal_dir_idx])
     best_classifier = ContrastPairClassifier(
         input_dim=train_sup_x1.shape[1],

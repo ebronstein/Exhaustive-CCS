@@ -504,11 +504,23 @@ def load_orthogonal_directions(run_dir: str) -> tuple[np.ndarray, np.ndarray]:
     if not intercepts_path.exists():
         raise ValueError(f"File not found: {intercepts_path}")
     intercepts = np.load(intercepts_path)
-    if intercepts.shape[0] != orthogonal_dirs.shape[1]:
+    if intercepts.shape[0] != orthogonal_dirs.shape[0]:
         raise ValueError(
             f"Expected the same number of intercepts as orthogonal directions, "
-            f"got {intercepts.shape[0]} intercepts and {orthogonal_dirs.shape[1]} "
+            f"got {intercepts.shape[0]} intercepts and {orthogonal_dirs.shape[0]} "
             "orthogonal directions."
+        )
+    if orthogonal_dirs.ndim != 2:
+        raise ValueError(
+            f"Expected orthogonal directions to have 2 dimensions, got {orthogonal_dirs.ndim}."
+        )
+
+    if intercepts.ndim == 1:
+        intercepts = intercepts.reshape(-1, 1)
+    elif intercepts.shape != (orthogonal_dirs.shape[0], 1):
+        raise ValueError(
+            f"Expected intercepts to have shape ({orthogonal_dirs.shape[0]}, 1), "
+            f"got {intercepts.shape}."
         )
 
     return orthogonal_dirs, intercepts
