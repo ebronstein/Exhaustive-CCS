@@ -743,6 +743,10 @@ def train_ccs_select_lr(
 
     Args:
         TODO
+        num_orthogonal_directions: Number of orthogonal directions to use. If
+            load_orthogonal_directions_run_dir is provided, the first
+            num_orthogonal_directions of the loaded directions are used.
+            Otherwise, exactly num_orthogonal_directions are generated.
         load_orthogonal_directions_run_dir: Run directory from which to load the
             orthogonal directions. If provided, expects the file
             "{load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy"
@@ -789,9 +793,17 @@ def train_ccs_select_lr(
 
     # Load the orthogonal directions if provided. Otherwise, train them.
     if load_orthogonal_directions_run_dir is not None:
+        # orthogonal_dirs shape: [hidden_dim, n_directions]
         orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
             load_orthogonal_directions_run_dir
         )
+        if num_orthogonal_directions > orthogonal_dirs.shape[1]:
+            raise ValueError(
+                f"num_orthogonal_directions ({num_orthogonal_directions}) is "
+                "greater than the number of orthogonal directions found by LR "
+                f"({orthogonal_dirs.shape[1]})."
+            )
+        orthogonal_dirs = orthogonal_dirs[:, :num_orthogonal_directions]
         lr_fit_results = []
     else:
         orthogonal_dirs, intercepts, lr_fit_results = train_orthogonal_lr_probes(
@@ -910,7 +922,6 @@ def train_ccs_select_lr(
         "train_labeled_losses": train_labeled_losses,
         "test_labeled_losses": test_labeled_losses,
     }
-    breakpoint()
 
     # Add the orthogonal directions to the final fit result if they were trained
     # in this run.
