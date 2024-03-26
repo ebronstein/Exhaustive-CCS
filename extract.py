@@ -87,7 +87,7 @@ def get_project_along_mean_diff(method: str, project_along_mean_diff: bool) -> b
 
 def method_uses_concat_hs_mode(method: str) -> bool:
     return (
-        method in ("CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR", "Random")
+        method in ("LR", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR", "Random")
     ) or method.startswith("RCCS")
 
 
