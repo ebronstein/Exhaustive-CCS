@@ -493,6 +493,46 @@ def maximum_existing_run_id(basedir: str, with_params: bool = True) -> int:
         return 0
 
 
+def get_orthogonal_directions_run_dir(
+    datasets_or_train_dir: str, seed: int, logger=None
+) -> Path:
+    """Returns the run directory path containing the orthogonal directions.
+
+    Args:
+        datasets_or_train_dir (str): The path to the datasets directory or the
+            train directory.
+        seed (int): The seed.
+        logger (Optional[Logger], optional): The logger. Defaults to None.
+
+    Returns:
+        Path: The path to the run directory containing the orthogonal directions.
+    """
+    datasets_or_train_dir = Path(datasets_or_train_dir)
+    if not datasets_or_train_dir.exists():
+        raise ValueError(f"Path {datasets_or_train_dir} does not exist")
+    if (datasets_or_train_dir / "train/orthogonal_directions.npy").exists():
+        return datasets_or_train_dir / "train/orthogonal_directions.npy"
+    orthogonal_dirs_filepaths = list(
+        datasets_or_train_dir.glob(f"seed_{seed}/**/train/orthogonal_directions.npy")
+    )
+
+    if not orthogonal_dirs_filepaths:
+        raise ValueError(f"No orthogonal directions found for seed {seed} under {path}")
+
+    if len(orthogonal_dirs_filepaths) > 1:
+        run_ids = [int(p.parts[-3]) for p in orthogonal_dirs_filepaths]
+        max_run_id_idx = run_ids.index(max(run_ids))
+        orthogonal_dirs_filepath = orthogonal_dirs_filepaths[max_run_id_idx]
+        if logger:
+            logger.warning(
+                f"Multiple orthogonal directions found for seed {seed} under {path}. Using {orthogonal_dirs_filepath}"
+            )
+    else:
+        orthogonal_dirs_filepath = orthogonal_dirs_filepaths[0]
+
+    return Path(*orthogonal_dirs_filepath.parts[:-2])
+
+
 def load_orthogonal_directions(run_dir: str) -> tuple[np.ndarray, np.ndarray]:
     train_dir = Path(run_dir, "train")
     orthogonal_dirs_path = train_dir / "orthogonal_directions.npy"

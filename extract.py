@@ -63,7 +63,15 @@ PrefixType = Literal[
 ]
 
 MethodType = Literal[
-    "0-shot", "TPC", "KMeans", "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR"
+    "0-shot",
+    "TPC",
+    "KMeans",
+    "LR",
+    "BSS",
+    "CCS",
+    "CCS+LR",
+    "CCS-in-LR-span",
+    "CCS-select-LR",
 ]
 
 ex = Experiment()
@@ -131,7 +139,16 @@ def sacred_config():
     include_bias: bool = True
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
-    load_orthogonal_directions_run_dir: Optional[str] = None
+    # Run directory or datasets ancestor directory to load orthogonal
+    # directions from. If provided, can be the run directory, in which
+    # case the orthogonal directions should be at
+    # {load_orthogonal_directions_dir}/train/orthogonal_directions.npy, or the
+    # datasets ancestory directory, in which case the orthogonal directions
+    # should be at
+    # {load_orthogonal_directions_dir}/seed_{seed}/{run_dir}/train/orthogonal_directions.npy.
+    # For the latter, if there are multiple runs, the latest run will be used.
+    # If None, orthogonal directions will be trained from scratch.
+    load_orthogonal_directions_dir: Optional[str] = None
     span_dirs_combination: SpanDirsCombination = "linear"
     device: Literal["cuda", "cpu"] = "cuda"
     # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
@@ -502,6 +519,14 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             )
             acc_dict, loss_dict, ece_dict, proj_model, classifier = eval(**eval_kwargs)
         else:
+            if _config["load_orthogonal_directions_dir"] is not None:
+                load_orthogonal_directions_run_dir = (
+                    load_utils.get_orthogonal_directions_run_dir(
+                        _config["load_orthogonal_directions_dir"], seed, logger=_log
+                    )
+                )
+            else:
+                load_orthogonal_directions_run_dir = None
             main_results_kwargs = dict(
                 data_dict=data_dict,
                 train_prefix=prefix,
@@ -510,9 +535,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_dir=run_dir,
                 run_id=run_id,
                 save_orthogonal_directions=_config["save_orthogonal_directions"],
-                load_orthogonal_directions_run_dir=_config[
-                    "load_orthogonal_directions_run_dir"
-                ],
+                load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
                 **kwargs,
             )
             (
