@@ -440,7 +440,7 @@ class myClassifyModel(LogisticRegression):
         use_scheduler=False,
         weights=None,
         lr=1e-1,
-        epochs=20,
+        n_epochs=20,
         device="cuda",
     ):
         if self.method == "LR":
@@ -522,7 +522,7 @@ class myClassifyModel(LogisticRegression):
                         min_lr=1e-6,
                     )
 
-                for epoch in range(epochs):
+                for epoch in range(n_epochs):
 
                     z = [w @ theta.T for w in x]
 
@@ -540,7 +540,7 @@ class myClassifyModel(LogisticRegression):
 
                     if ((epoch + 1) % 50 == 0 and self.print_more) or epoch in [
                         0,
-                        epochs - 1,
+                        n_epochs - 1,
                     ]:
                         theta_np = (
                             theta.cpu().detach().numpy().reshape(1, -1)
@@ -780,6 +780,16 @@ def mainResults(
     # TODO: standardize fit_result.
     fit_result = None
     if classification_method == "CCS":
+        # TODO: implement different weights for CCS loss terms.
+        if train_kwargs.get("consistency_weight", 1.0) != 1.0:
+            raise NotImplementedError(
+                "consistency_weight != 1.0 not implemented for CCS method."
+            )
+        if train_kwargs.get("confidence_weight", 1.0) != 1.0:
+            raise NotImplementedError(
+                "confidence_weight != 1.0 not implemented for CCS method."
+            )
+
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
             data_dict=train_prefix_data_dict,
@@ -790,8 +800,12 @@ def mainResults(
             split_pair=mode == "concat",
         )
 
+        include_bias = train_kwargs.pop("include_bias", True)
         classify_model = ConsistencyMethod(
-            no_train=no_train, verbose=print_more, constraints=constraints
+            include_bias=include_bias,
+            no_train=no_train,
+            verbose=print_more,
+            constraints=constraints,
         )
         ccs_train_kwargs_names = ["n_epochs", "n_tries", "lr"]
         ccs_train_kwargs = {

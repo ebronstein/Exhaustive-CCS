@@ -1,10 +1,11 @@
 import json
 import os
+import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
 from copy import copy
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,6 +29,20 @@ from utils_extraction.projection import myReduction
 Tensor = Union[torch.Tensor, np.ndarray]
 ContrastPairNp = tuple[np.ndarray, np.ndarray]
 ContrastPair = tuple[torch.Tensor, torch.Tensor]
+SpanDirsCombination = Literal["linear", "affine", "convex"]
+
+CCS_LR_KWARGS_NAMES = train_kwargs_names = [
+    "n_tries",
+    "n_epochs",
+    "lr",
+    "include_bias",
+    "unsup_weight",
+    "sup_weight",
+    "consistency_weight",
+    "confidence_weight",
+    "opt",
+    "span_dirs_combination",
+]
 
 
 def normalize(directions):
@@ -146,6 +161,7 @@ class ContrastPairClassifier(nn.Module):
         input_dim: int,
         orthogonal_dirs: Optional[np.ndarray] = None,
         span_dirs: Optional[np.ndarray] = None,
+        span_dirs_combination: SpanDirsCombination = "linear",
         include_bias=True,
         device="cuda",
         verbose=False,
@@ -166,9 +182,15 @@ class ContrastPairClassifier(nn.Module):
         """
         super(ContrastPairClassifier, self).__init__()
         self.input_dim = input_dim
+        self.span_dirs_combination = span_dirs_combination
         self.include_bias = include_bias
         self.device = device
         self.verbose = verbose
+
+        if span_dirs_combination not in typing.get_args(SpanDirsCombination):
+            raise ValueError(
+                f"span_dirs_combination should be one of {SpanDirsCombination}"
+            )
 
         if orthogonal_dirs is not None and span_dirs is not None:
             raise ValueError(
@@ -231,10 +253,18 @@ class ContrastPairClassifier(nn.Module):
     def predict(self, x: torch.Tensor) -> torch.Tensor:
         x = x.to(self.device)  # [N, input_dim]
         if self.span_dirs is not None:
-            lin_combo = torch.matmul(self.coef, self.span_dirs)  # [1, input_dim]
+            if self.span_dirs_combination == "affine":
+                coef = self.coef / self.coef.sum(dim=1)
+            elif self.span_dirs_combination == "convex":
+                coef = F.softmax(self.coef, dim=1)
+            else:
+                coef = self.coef
+            lin_combo = torch.matmul(coef, self.span_dirs)  # [1, input_dim]
             logits = torch.matmul(x, lin_combo.t())  # [N, 1]
         else:
             logits = torch.matmul(x, self.coef.t())  # [N, 1]
+        if self.include_bias:
+            logits += self.bias
         probs = torch.sigmoid(logits)
         return probs
 
@@ -253,13 +283,19 @@ class ContrastPairClassifier(nn.Module):
         )
 
     def compute_unsupervised_loss(
-        self, unsup_x0: torch.Tensor, unsup_x1: torch.Tensor
+        self,
+        unsup_x0: torch.Tensor,
+        unsup_x1: torch.Tensor,
+        consistency_weight: float = 1.0,
+        confidence_weight: float = 1.0,
     ) -> OrderedDict:
         unsup_prob_0 = self.predict(unsup_x0)
         unsup_prob_1 = self.predict(unsup_x1)
         consistency_loss = ((unsup_prob_0 - (1 - unsup_prob_1)) ** 2).mean()
         confidence_loss = torch.min(unsup_prob_0, unsup_prob_1).pow(2).mean()
-        unsupervised_loss = consistency_loss + confidence_loss
+        unsupervised_loss = (
+            consistency_weight * consistency_loss + confidence_weight * confidence_loss
+        )
 
         return OrderedDict(
             [
@@ -278,10 +314,17 @@ class ContrastPairClassifier(nn.Module):
         unsup_x1: torch.Tensor,
         unsup_weight=1.0,
         sup_weight=1.0,
+        consistency_weight=1.0,
+        confidence_weight=1.0,
         # l2_weight=0.0,
     ) -> OrderedDict:
         supervised_loss_dict = self.compute_supervised_loss(sup_x0, sup_x1, sup_y)
-        unsupervised_loss_dict = self.compute_unsupervised_loss(unsup_x0, unsup_x1)
+        unsupervised_loss_dict = self.compute_unsupervised_loss(
+            unsup_x0,
+            unsup_x1,
+            consistency_weight=consistency_weight,
+            confidence_weight=confidence_weight,
+        )
 
         # L2 regularization loss.
         # l2_reg_loss = torch.norm(self.coef) ** 2
@@ -318,6 +361,8 @@ class ContrastPairClassifier(nn.Module):
         lr=1e-2,
         unsup_weight=1.0,
         sup_weight=1.0,
+        consistency_weight=1.0,
+        confidence_weight=1.0,
         opt: str = "sgd",
         eval_freq: int = 20,
         logger=None,
@@ -343,6 +388,8 @@ class ContrastPairClassifier(nn.Module):
                 train_unsup_x1,
                 unsup_weight=unsup_weight,
                 sup_weight=sup_weight,
+                consistency_weight=consistency_weight,
+                confidence_weight=confidence_weight,
             )
             train_losses["total_loss"].backward()
             optimizer.step()
@@ -442,11 +489,14 @@ def fit(
     test_unsup_y,
     orthogonal_dirs: Optional[np.ndarray] = None,
     span_dirs: Optional[np.ndarray] = None,
+    span_dirs_combination: SpanDirsCombination = "linear",
     n_tries=10,
     n_epochs=1000,
     lr=1e-2,
     unsup_weight=1.0,
     sup_weight=1.0,
+    consistency_weight=1.0,
+    confidence_weight=1.0,
     opt: str = "sgd",
     include_bias: bool = True,
     verbose=False,
@@ -485,6 +535,7 @@ def fit(
             input_dim=train_sup_x1.shape[1],
             orthogonal_dirs=orthogonal_dirs,
             span_dirs=span_dirs,
+            span_dirs_combination=span_dirs_combination,
             include_bias=include_bias,
             device=device,
             verbose=verbose,
@@ -506,6 +557,8 @@ def fit(
             lr,
             unsup_weight=unsup_weight,
             sup_weight=sup_weight,
+            consistency_weight=consistency_weight,
+            confidence_weight=confidence_weight,
             opt=opt,
             logger=logger,
         )
@@ -740,14 +793,8 @@ def train_ccs_in_lr_span(
             logger=logger,
         )
 
-    train_kwargs_names = [
-        "n_tries",
-        "n_epochs",
-        "lr",
-        "opt",
-    ]
     ccs_train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+        k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES
     }
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
     final_fit_result = fit(
@@ -764,7 +811,6 @@ def train_ccs_in_lr_span(
         test_unsup_x1,
         test_unsup_y,
         span_dirs=orthogonal_dirs,
-        include_bias=False,
         verbose=True,
         device=device,
         logger=logger,
@@ -902,14 +948,8 @@ def train_ccs_select_lr(
         -1, 1
     )
 
-    train_kwargs_names = [
-        "n_tries",
-        "n_epochs",
-        "lr",
-        "opt",
-    ]
     ccs_train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in train_kwargs_names
+        k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES
     }
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
 
@@ -1036,15 +1076,7 @@ def train_ccs_lr(
         project_along_mean_diff=project_along_mean_diff,
     )
 
-    train_kwargs_names = [
-        "n_tries",
-        "n_epochs",
-        "lr",
-        "unsup_weight",
-        "sup_weight",
-        "opt",
-    ]
-    train_kwargs = {k: v for k, v in train_kwargs.items() if k in train_kwargs_names}
+    train_kwargs = {k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES}
 
     # Train the model.
     fit_result = fit(

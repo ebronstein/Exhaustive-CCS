@@ -16,6 +16,7 @@ from sacred.observers import FileStorageObserver
 
 from utils import file_utils
 from utils_extraction import load_utils
+from utils_extraction.classifier import SpanDirsCombination
 from utils_extraction.load_utils import (
     get_params_dir,
     load_hidden_states_for_datasets,
@@ -124,16 +125,21 @@ def sacred_config():
     n_epochs: int = 1000
     sup_weight: float = 1.0
     unsup_weight: float = 1.0
+    consistency_weight: float = 1.0
+    confidence_weight: float = 1.0
     lr: float = 1e-2
+    include_bias: bool = True
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
     load_orthogonal_directions_run_dir: Optional[str] = None
+    span_dirs_combination: SpanDirsCombination = "linear"
     device: Literal["cuda", "cpu"] = "cuda"
     # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
     log_reg = {
         "penalty": "l2",
         "C": 0.1,
         "max_iter": 10_000,
+        "fit_intercept": True,
     }
 
     # Saving
@@ -453,9 +459,13 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             n_epochs=_config["n_epochs"],
             sup_weight=_config["sup_weight"],
             unsup_weight=_config["unsup_weight"],
+            consistency_weight=_config["consistency_weight"],
+            confidence_weight=_config["confidence_weight"],
             lr=_config["lr"],
+            include_bias=_config["include_bias"],
             opt=_config["opt"],
             num_orthogonal_directions=_config["num_orthogonal_directions"],
+            span_dirs_combination=_config["span_dirs_combination"],
             log_reg=_config["log_reg"],
         )
         kwargs = dict(
