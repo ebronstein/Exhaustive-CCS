@@ -71,6 +71,7 @@ MethodType = Literal[
     "CCS",
     "CCS+LR",
     "CCS-in-LR-span",
+    "CCS+LR-in-span",
     "CCS-select-LR",
 ]
 
@@ -87,7 +88,7 @@ def get_project_along_mean_diff(method: str, project_along_mean_diff: bool) -> b
 
 def method_uses_concat_hs_mode(method: str) -> bool:
     return (
-        method in ("LR", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR", "Random")
+        method in ("LR", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR", "Random")
     ) or method.startswith("RCCS")
 
 
@@ -590,7 +591,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                     coef = np.concatenate([constraints, coef], axis=0)
                     bias = np.concatenate([old_biases, bias], axis=0)
             # TODO: save CSS+LR using torch.save.
-            elif method in ["CSS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
+            elif method in ["CSS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
                 raise NotImplementedError()
             else:
                 raise ValueError(f"Invalid method: {method}")
@@ -609,7 +610,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         # TODO: standardize losses
         # Mean losses over all eval datasets and all prompts.
-        if method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
+        if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
             loss_names = list(loss_dict[list(loss_dict.keys())[0]][0].keys())
             mean_losses = {}
             for loss_name in loss_names:
@@ -678,7 +679,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if not loss_dict:
                     continue
 
-                if method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
+                if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
                     for loss_name, loss in loss_dict[test_set][prompt_idx].items():
                         eval_result[loss_name] = loss
                 elif "CCS" in method:

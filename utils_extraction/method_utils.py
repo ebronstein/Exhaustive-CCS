@@ -25,6 +25,7 @@ from utils_extraction.classifier import (
     project_coeff,
     train_ccs_in_lr_span,
     train_ccs_lr,
+    train_ccs_lr_in_span,
     train_ccs_select_lr,
 )
 from utils_extraction.data_utils import getConcat, getPair
@@ -35,7 +36,7 @@ UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
 
 EvalClassificationMethodType = Literal[
-    "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS-select-LR"
+    "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"
 ]
 
 
@@ -672,8 +673,8 @@ def mainResults(
     project_along_mean_diff=False,
     device="cuda",
     run_dir: Optional[str] = None,
-    seed: Optional[str] = None,
-    run_id: Optional[str] = None,
+    seed: Optional[int] = None,
+    run_id: Optional[int] = None,
     save_orthogonal_directions=False,
     load_orthogonal_directions_run_dir: Optional[str] = None,
     logger=None,
@@ -855,6 +856,43 @@ def mainResults(
             num_orthogonal_directions,
             mode,
             load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
+            train_kwargs=train_kwargs,
+            project_along_mean_diff=project_along_mean_diff,
+            device=device,
+            logger=logger,
+        )
+
+        if save_orthogonal_directions:
+            load_utils.save_orthogonal_directions(
+                orthogonal_dirs, intercepts, run_dir, seed, run_id
+            )
+    elif classification_method == "CCS+LR-in-span":
+        if labeled_train_data_dict is None:
+            raise ValueError(
+                f"labeled_train_data_dict must be provided for {classification_method}."
+            )
+        if "num_orthogonal_directions" not in train_kwargs:
+            raise ValueError(
+                f"num_orthogonal_directions required for {classification_method} method."
+            )
+        if load_orthogonal_directions_run_dir is None:
+            raise ValueError(
+                f"load_orthogonal_directions_run_dir required for {classification_method} method."
+            )
+        num_orthogonal_directions = train_kwargs.pop("num_orthogonal_directions")
+
+        # Use train_prefix for the labeled data and test_prefix for the
+        # unlabeled data.
+        classify_model, fit_result, orthogonal_dirs, intercepts = train_ccs_lr_in_span(
+            data_dict,
+            permutation_dict,
+            train_data_dict,
+            labeled_train_data_dict,
+            projection_model,
+            train_prefix,
+            test_prefix,
+            num_orthogonal_directions,
+            load_orthogonal_directions_run_dir,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
@@ -1084,7 +1122,7 @@ def eval(
                 split_pair=split_pair,
             )
 
-            if classification_method in ["CCS+LR", "CCS-in-LR-span", "CCS-select-LR"]:
+            if classification_method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
                 device = classify_model.device
                 x0, x1 = data
                 x0 = torch.tensor(x0, device=device)
