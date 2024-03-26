@@ -533,7 +533,9 @@ def get_orthogonal_directions_run_dir(
     return Path(*orthogonal_dirs_filepath.parts[:-2])
 
 
-def load_orthogonal_directions(run_dir: str) -> tuple[np.ndarray, np.ndarray]:
+def load_orthogonal_directions(
+    run_dir: str, num_directions: Optional[int] = None
+) -> tuple[np.ndarray, np.ndarray]:
     train_dir = Path(run_dir, "train")
     orthogonal_dirs_path = train_dir / "orthogonal_directions.npy"
     if not orthogonal_dirs_path.exists():
@@ -562,6 +564,15 @@ def load_orthogonal_directions(run_dir: str) -> tuple[np.ndarray, np.ndarray]:
             f"Expected intercepts to have shape ({orthogonal_dirs.shape[0]}, 1), "
             f"got {intercepts.shape}."
         )
+
+    if num_directions is not None:
+        if num_directions > orthogonal_dirs.shape[0]:
+            raise ValueError(
+                f"Requested {num_directions} orthogonal directions, but only "
+                f"{orthogonal_dirs.shape[0]} are available."
+            )
+        orthogonal_dirs = orthogonal_dirs[:num_directions]
+        intercepts = intercepts[:num_directions]
 
     return orthogonal_dirs, intercepts
 
