@@ -10,8 +10,8 @@
 
 set -ex
 
-source /accounts/projects/jsteinhardt/$(whoami)/.bashrc
-cd /scratch/users/$(whoami)/Exhaustive-CCS
+cd /nas/ucb/ebronstein/Exhaustive-CCS
+eval "$(/nas/ucb/ebronstein/anaconda3/bin/conda shell.bash hook)"
 conda activate exhaustive-ccs
 
 METHODS='["LR"]'

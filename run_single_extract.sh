@@ -9,8 +9,8 @@
 
 set -ex
 
-source /accounts/projects/jsteinhardt/$(whoami)/.bashrc
-cd /scratch/users/$(whoami)/Exhaustive-CCS
+cd /nas/ucb/ebronstein/Exhaustive-CCS
+eval "$(/nas/ucb/ebronstein/anaconda3/bin/conda shell.bash hook)"
 conda activate exhaustive-ccs
 
 MODEL=${MODEL:-"/scratch/data/meta-llama/Llama-2-7b-chat-hf"}
@@ -32,6 +32,7 @@ N_TRIES=${N_TRIES:-10}
 C=${C:-0.1}
 MAX_ITER=${MAX_ITER:-10000}
 PENALTY=${PENALTY:-"l2"}
+SAVE_ORTHOGONAL_DIRECTIONS=${SAVE_ORTHOGONAL_DIRECTIONS:-False}
 
 if [[ -z "$NAME" ]]; then
     echo "Error: NAME is not set"
@@ -58,6 +59,7 @@ args=(
     log_reg.C=$C \
     log_reg.max_iter=$MAX_ITER \
     log_reg.penalty=$PENALTY \
+    save_orthogonal_directions=$SAVE_ORTHOGONAL_DIRECTIONS \
     save_states=False \
     save_params=False
 )
