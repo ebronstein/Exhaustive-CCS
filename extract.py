@@ -219,10 +219,12 @@ def _format_config(config: dict) -> dict:
 
     config = _convert_dogmatics_to_standard(config)
 
-    # Convert single strings to lists.
+    # Convert single strings to lists and remove duplicates.
     for key in ["datasets", "labeled_datasets", "eval_datasets", "method_list"]:
         if isinstance(config[key], str):
             config[key] = [config[key]]
+        else:
+            config[key] = list(set(config[key]))
 
     # Replace Burns datasets.
     for key in ["datasets", "labeled_datasets", "eval_datasets"]:
@@ -388,7 +390,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         mode_to_data[mode] = {}
         for prefix_ in prefixes:
             # Only generate the data (and other related dictionaries) once to keep
-            # themn the same across methods.
+            # them the same across methods.
             data_dict = load_hidden_states_for_datasets(
                 _config["load_dir"],
                 mdl_name=model,
