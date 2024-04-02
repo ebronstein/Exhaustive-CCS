@@ -16,7 +16,7 @@ from sacred.observers import FileStorageObserver
 
 from utils import file_utils
 from utils_extraction import load_utils
-from utils_extraction.classifier import SpanDirsCombination
+from utils_extraction.classifier import ContrastPairClassifier, SpanDirsCombination
 from utils_extraction.load_utils import (
     get_params_dir,
     load_hidden_states_for_datasets,
@@ -565,10 +565,6 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         if (
             _config["save_params"]
             and not _config["eval_only"]
-            and (
-                method in ["TPC", "BSS", "CCS", "Random", "LR"]
-                or method.startswith("RCCS")
-            )
         ):
             save_params_dir = get_params_dir(
                 run_dir,
@@ -592,9 +588,11 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if method != "RCCS0":
                     coef = np.concatenate([constraints, coef], axis=0)
                     bias = np.concatenate([old_biases, bias], axis=0)
-            # TODO: save CSS+LR using torch.save.
-            elif method in ["CSS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
-                raise NotImplementedError()
+            elif isinstance(classifier, ContrastPairClassifier):
+                coef, bias = classifier.coef, classifier.bias
+                coef = coef.detach().cpu().numpy()
+                if bias is not None:
+                    bias = bias.detach().cpu().numpy()
             else:
                 raise ValueError(f"Invalid method: {method}")
 
