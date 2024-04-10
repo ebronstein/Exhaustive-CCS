@@ -677,6 +677,7 @@ def mainResults(
     run_id: Optional[int] = None,
     save_orthogonal_directions=False,
     load_orthogonal_directions_run_dir: Optional[str] = None,
+    projected_sgd: bool = False,
     logger=None,
 ):
     """
@@ -728,6 +729,9 @@ def mainResults(
             orthogonal directions. If provided, expects the file
             "{load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy"
             to exist.
+        projected_sgd (bool, optional): Whether to use projected SGD. If True,
+            the orthogonal directions are projected out of the parameters after
+            each update.
     """
     if print_more:
         print(
@@ -889,6 +893,7 @@ def mainResults(
             test_prefix,
             num_orthogonal_directions,
             load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
+            projected_sgd=projected_sgd,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,

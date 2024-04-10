@@ -88,7 +88,16 @@ def get_project_along_mean_diff(method: str, project_along_mean_diff: bool) -> b
 
 def method_uses_concat_hs_mode(method: str) -> bool:
     return (
-        method in ("LR", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR", "Random")
+        method
+        in (
+            "LR",
+            "CCS",
+            "CCS+LR",
+            "CCS-in-LR-span",
+            "CCS+LR-in-span",
+            "CCS-select-LR",
+            "Random",
+        )
     ) or method.startswith("RCCS")
 
 
@@ -140,6 +149,7 @@ def sacred_config():
     include_bias: bool = True
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
+    projected_sgd: bool = True
     # Run directory or datasets ancestor directory to load orthogonal
     # directions from. If provided, can be the run directory, in which
     # case the orthogonal directions should be at
@@ -539,6 +549,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_id=run_id,
                 save_orthogonal_directions=_config["save_orthogonal_directions"],
                 load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
+                projected_sgd=_config["projected_sgd"],
                 **kwargs,
             )
             (
@@ -562,10 +573,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 save_fit_plots(fit_result, run_dir, method, logger=_log)
 
         # Save parameters if needed.
-        if (
-            _config["save_params"]
-            and not _config["eval_only"]
-        ):
+        if _config["save_params"] and not _config["eval_only"]:
             save_params_dir = get_params_dir(
                 run_dir,
                 maybe_append_project_suffix(method_str, project_along_mean_diff),
@@ -679,7 +687,12 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 if not loss_dict:
                     continue
 
-                if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
+                if method in [
+                    "CCS+LR",
+                    "CCS-in-LR-span",
+                    "CCS+LR-in-span",
+                    "CCS-select-LR",
+                ]:
                     for loss_name, loss in loss_dict[test_set][prompt_idx].items():
                         eval_result[loss_name] = loss
                 elif "CCS" in method:

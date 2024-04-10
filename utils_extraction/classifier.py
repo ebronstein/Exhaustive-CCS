@@ -208,8 +208,8 @@ class ContrastPairClassifier(nn.Module):
                 "orthogonal_dirs",
                 torch.tensor(orthogonal_dirs, dtype=torch.float32).to(device),
             )
-            self.project_params(self.orthogonal_dirs)
             self.coef, self.bias = make_coef_bias(input_dim, include_bias, device)
+            self.project_params(self.orthogonal_dirs)
             self.span_dirs = None
         elif span_dirs is not None:
             span_dirs = process_directions(span_dirs, input_dim)
@@ -243,16 +243,16 @@ class ContrastPairClassifier(nn.Module):
             self.bias = nn.Parameter(bias)
 
     def project_params(self, directions: torch.Tensor):
-        """Project `directions` out of the model parameters (coefficients)."""
-        # directions shape: [input_dim, n_directions]
+        """Project `directions` out of the model parameters (coefficients).
+
+        Args:
+            directions: The directions to project out. Shape: [n_directions, input_dim].
+        """
         with torch.no_grad():
             params = self.coef  # [1, input_dim]
-            # [1, n_directions]
-            inner_products = torch.matmul(params, directions)
+            inner_products = torch.matmul(params, directions.t())  # [1, n_directions]
             # [1, input_dim]
-            proj_params = params - torch.matmul(
-                inner_products, directions.permute(1, 0)
-            )
+            proj_params = params - torch.matmul(inner_products, directions)
             self.coef = nn.Parameter(proj_params)
 
     def predict(self, x: torch.Tensor) -> torch.Tensor:
@@ -722,6 +722,7 @@ def train_orthogonal_probes(
     test_unsup_x1: np.ndarray,
     test_unsup_y: np.ndarray,
     num_orthogonal_directions: int,
+    projected_sgd: bool = True,
     include_bias: bool = True,
     train_kwargs=None,
     device="cuda",
@@ -731,6 +732,8 @@ def train_orthogonal_probes(
 
     Args:
         TODO
+        projected_sgd: Whether to use projected SGD. If True, the orthogonal
+            directions are projected out of the parameters after each update.
         train_kwargs: Keyword arguments passed to
             ContrastPairClassifier.train_model.
 
@@ -746,12 +749,8 @@ def train_orthogonal_probes(
     fit_results = []
 
     # Convert data to tensors.
-    train_sup_x0 = torch.tensor(
-        train_sup_x0, dtype=torch.float, device=device
-    )
-    train_sup_x1 = torch.tensor(
-        train_sup_x1, dtype=torch.float, device=device
-    )
+    train_sup_x0 = torch.tensor(train_sup_x0, dtype=torch.float, device=device)
+    train_sup_x1 = torch.tensor(train_sup_x1, dtype=torch.float, device=device)
     train_sup_y = torch.tensor(train_sup_y, dtype=torch.float, device=device).view(
         -1, 1
     )
@@ -773,8 +772,16 @@ def train_orthogonal_probes(
         if logger is not None:
             logger.info(f"Direction {i+1}/{num_orthogonal_directions}")
 
+        # Project away the previous orthogonal directions if they exist and
+        # projected_sgd.
+        cur_orthogonal_dirs = (
+            np.array(orthogonal_dirs) if projected_sgd and orthogonal_dirs else None
+        )
         model = ContrastPairClassifier(
-            train_sup_x1.shape[1], include_bias=include_bias, device=device
+            train_sup_x1.shape[1],
+            orthogonal_dirs=cur_orthogonal_dirs,
+            include_bias=include_bias,
+            device=device,
         )
         train_history, eval_history = model.train_model(
             train_sup_x0,
@@ -835,6 +842,7 @@ def train_ccs_lr_in_span(
     unlabeled_prefix: str,
     num_orthogonal_directions: int,
     load_orthogonal_directions_run_dir: Optional[str] = None,
+    projected_sgd: bool = True,
     train_kwargs={},
     project_along_mean_diff=False,
     device="cuda",
@@ -847,6 +855,8 @@ def train_ccs_lr_in_span(
         load_orthogonal_directions_run_dir: Run directory from which to load the orthogonal directions. If provided, expects the file
         {load_orthogonal_directions_run_dir}/train/orthogonal_directions.npy
         to exist.
+        projected_sgd: Whether to use projected SGD. If True, the orthogonal
+            directions are projected out of the parameters after each update.
 
     Returns:
         best_probe: The best probe.
@@ -904,6 +914,7 @@ def train_ccs_lr_in_span(
             test_unsup_x1,
             test_unsup_y,
             num_orthogonal_directions,
+            projected_sgd=projected_sgd,
             include_bias=include_bias,
             train_kwargs=ccs_lr_train_kwargs,
             device=device,
