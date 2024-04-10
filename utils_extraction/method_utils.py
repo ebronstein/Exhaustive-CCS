@@ -875,10 +875,6 @@ def mainResults(
             raise ValueError(
                 f"num_orthogonal_directions required for {classification_method} method."
             )
-        if load_orthogonal_directions_run_dir is None:
-            raise ValueError(
-                f"load_orthogonal_directions_run_dir required for {classification_method} method."
-            )
         num_orthogonal_directions = train_kwargs.pop("num_orthogonal_directions")
 
         # Use train_prefix for the labeled data and test_prefix for the
@@ -892,7 +888,7 @@ def mainResults(
             train_prefix,
             test_prefix,
             num_orthogonal_directions,
-            load_orthogonal_directions_run_dir,
+            load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
@@ -1122,7 +1118,12 @@ def eval(
                 split_pair=split_pair,
             )
 
-            if classification_method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
+            if classification_method in [
+                "CCS+LR",
+                "CCS-in-LR-span",
+                "CCS+LR-in-span",
+                "CCS-select-LR",
+            ]:
                 device = classify_model.device
                 x0, x1 = data
                 x0 = torch.tensor(x0, device=device)

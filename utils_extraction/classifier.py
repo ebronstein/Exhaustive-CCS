@@ -31,16 +31,21 @@ ContrastPairNp = tuple[np.ndarray, np.ndarray]
 ContrastPair = tuple[torch.Tensor, torch.Tensor]
 SpanDirsCombination = Literal["linear", "affine", "convex"]
 
-CCS_LR_KWARGS_NAMES = train_kwargs_names = [
-    "n_tries",
+# Keyword arguments for ContrastPairClassifier.train_model.
+CCS_LR_KWARGS_NAMES = [
     "n_epochs",
     "lr",
-    "include_bias",
     "unsup_weight",
     "sup_weight",
     "consistency_weight",
     "confidence_weight",
     "opt",
+]
+
+# Keyword arguments for the fit_ccs_lr function.
+FIT_CCS_LR_KWARGS_NAMES = CCS_LR_KWARGS_NAMES + [
+    "n_tries",
+    "include_bias",
     "span_dirs_combination",
 ]
 
@@ -474,7 +479,7 @@ class ContrastPairClassifier(nn.Module):
         return accuracy, p0, p1, probs
 
 
-def fit(
+def fit_ccs_lr(
     train_sup_x0,
     train_sup_x1,
     train_sup_y,
@@ -717,7 +722,6 @@ def train_orthogonal_probes(
     test_unsup_x1: np.ndarray,
     test_unsup_y: np.ndarray,
     num_orthogonal_directions: int,
-    mode: Mode,
     include_bias: bool = True,
     train_kwargs=None,
     device="cuda",
@@ -737,11 +741,33 @@ def train_orthogonal_probes(
         lr_fit_results: The fit results of the LR probes.
     """
     train_kwargs = train_kwargs or {}
-    cur_train_sup_x0 = train_sup_x0.copy()
-    cur_train_sup_x1 = train_sup_x1.copy()
     orthogonal_dirs = []
     intercepts = []
     fit_results = []
+
+    # Convert data to tensors.
+    train_sup_x0 = torch.tensor(
+        train_sup_x0, dtype=torch.float, device=device
+    )
+    train_sup_x1 = torch.tensor(
+        train_sup_x1, dtype=torch.float, device=device
+    )
+    train_sup_y = torch.tensor(train_sup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
+    train_unsup_x0 = torch.tensor(train_unsup_x0, dtype=torch.float, device=device)
+    train_unsup_x1 = torch.tensor(train_unsup_x1, dtype=torch.float, device=device)
+    train_unsup_y = torch.tensor(train_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
+    test_sup_x0 = torch.tensor(test_sup_x0, dtype=torch.float, device=device)
+    test_sup_x1 = torch.tensor(test_sup_x1, dtype=torch.float, device=device)
+    test_sup_y = torch.tensor(test_sup_y, dtype=torch.float, device=device).view(-1, 1)
+    test_unsup_x0 = torch.tensor(test_unsup_x0, dtype=torch.float, device=device)
+    test_unsup_x1 = torch.tensor(test_unsup_x1, dtype=torch.float, device=device)
+    test_unsup_y = torch.tensor(test_unsup_y, dtype=torch.float, device=device).view(
+        -1, 1
+    )
 
     for i in range(num_orthogonal_directions):
         if logger is not None:
@@ -766,8 +792,10 @@ def train_orthogonal_probes(
             logger=logger,
             **train_kwargs,
         )
-        orth_dir = model.coef.detach().cpu().numpy().squeeze(0)
-        orthogonal_dirs.append(orth_dir)
+        orth_dir = model.coef.detach().squeeze(0)
+        # Normalize the orthogonal direction.
+        orth_dir /= torch.norm(orth_dir)
+        orthogonal_dirs.append(orth_dir.cpu().numpy())
         if model.bias is not None:
             intercepts.append(model.bias.detach().cpu().numpy())
 
@@ -787,10 +815,10 @@ def train_orthogonal_probes(
             logger.info(f"Unsup test acc: {fit_result['unsup_test_acc']:.4f}")
 
         # Project away the direction.
-        cur_train_sup_x0 -= (cur_train_sup_x0 @ orth_dir)[:, None] * orth_dir
-        cur_train_sup_x1 -= (cur_train_sup_x1 @ orth_dir)[:, None] * orth_dir
-        assert np.abs(cur_train_sup_x0 @ orth_dir).max() < 1e-4
-        assert np.abs(cur_train_sup_x1 @ orth_dir).max() < 1e-4
+        train_sup_x0 -= (train_sup_x0 @ orth_dir)[:, None] * orth_dir
+        train_sup_x1 -= (train_sup_x1 @ orth_dir)[:, None] * orth_dir
+        assert (train_sup_x0 @ orth_dir).abs().max() < 1e-4
+        assert (train_sup_x1 @ orth_dir).abs().max() < 1e-4
 
     orthogonal_dirs = np.array(orthogonal_dirs)
 
@@ -806,7 +834,7 @@ def train_ccs_lr_in_span(
     labeled_prefix: str,
     unlabeled_prefix: str,
     num_orthogonal_directions: int,
-    load_orthogonal_directions_run_dir: str,
+    load_orthogonal_directions_run_dir: Optional[str] = None,
     train_kwargs={},
     project_along_mean_diff=False,
     device="cuda",
@@ -857,13 +885,40 @@ def train_ccs_lr_in_span(
         split="test", **unsup_data_kwargs
     )
 
-    # Load the orthogonal directions.
-    orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
-        load_orthogonal_directions_run_dir, num_directions=num_orthogonal_directions
-    )
+    if load_orthogonal_directions_run_dir is None:
+        include_bias = train_kwargs["include_bias"]
+        ccs_lr_train_kwargs = {
+            k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES
+        }
+        orthogonal_dirs, intercepts, _ = train_orthogonal_probes(
+            train_sup_x0,
+            train_sup_x1,
+            train_sup_y,
+            test_sup_x0,
+            test_sup_x1,
+            test_sup_y,
+            train_unsup_x0,
+            train_unsup_x1,
+            train_unsup_y,
+            test_unsup_x0,
+            test_unsup_x1,
+            test_unsup_y,
+            num_orthogonal_directions,
+            include_bias=include_bias,
+            train_kwargs=ccs_lr_train_kwargs,
+            device=device,
+            logger=logger,
+        )
+    else:
+        # Load the orthogonal directions.
+        orthogonal_dirs, intercepts = load_utils.load_orthogonal_directions(
+            load_orthogonal_directions_run_dir, num_directions=num_orthogonal_directions
+        )
 
-    train_kwargs = {k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES}
-    final_fit_result = fit(
+    fit_train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in FIT_CCS_LR_KWARGS_NAMES
+    }
+    final_fit_result = fit_ccs_lr(
         train_sup_x0,
         train_sup_x1,
         train_sup_y,
@@ -880,7 +935,7 @@ def train_ccs_lr_in_span(
         verbose=True,
         device=device,
         logger=logger,
-        **train_kwargs,
+        **fit_train_kwargs,
     )
     best_probe = final_fit_result["best_probe"]
 
@@ -978,10 +1033,10 @@ def train_ccs_in_lr_span(
         )
 
     ccs_train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES
+        k: v for k, v in train_kwargs.items() if k in FIT_CCS_LR_KWARGS_NAMES
     }
     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-    final_fit_result = fit(
+    final_fit_result = fit_ccs_lr(
         train_sup_x0,
         train_sup_x1,
         train_sup_y,
@@ -1125,11 +1180,6 @@ def train_ccs_select_lr(
         -1, 1
     )
 
-    ccs_train_kwargs = {
-        k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES
-    }
-    ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-
     train_unlabeled_losses = defaultdict(list)
     test_unlabeled_losses = defaultdict(list)
     train_labeled_losses = defaultdict(list)
@@ -1253,10 +1303,12 @@ def train_ccs_lr(
         project_along_mean_diff=project_along_mean_diff,
     )
 
-    train_kwargs = {k: v for k, v in train_kwargs.items() if k in CCS_LR_KWARGS_NAMES}
+    train_kwargs = {
+        k: v for k, v in train_kwargs.items() if k in FIT_CCS_LR_KWARGS_NAMES
+    }
 
     # Train the model.
-    fit_result = fit(
+    fit_result = fit_ccs_lr(
         train_sup_x0,
         train_sup_x1,
         train_sup_y,
