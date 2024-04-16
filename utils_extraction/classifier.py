@@ -440,10 +440,12 @@ class ContrastPairClassifier(nn.Module):
                 for key, loss in test_losses.items():
                     eval_history[key].append(loss.item())
 
-            if self.verbose and (epoch + 1) % 100 == 0 and logger is not None:
-                logger.info(
-                    f"Epoch {epoch+1}/{n_epochs}, Loss: {train_losses['total_loss'].item()}"
-                )
+            if self.verbose and (epoch + 1) % 100 == 0:
+                msg = f"Epoch {epoch+1}/{n_epochs}, Loss: {train_losses['total_loss'].item()}"
+                if logger is not None:
+                    logger.info(msg)
+                else:
+                    print(msg)
 
             train_history["coef_norm"].append(self.coef.norm().item())
             if self.include_bias:
