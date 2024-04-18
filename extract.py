@@ -28,6 +28,7 @@ from utils_extraction.load_utils import (
     save_params,
 )
 from utils_extraction.method_utils import eval, mainResults
+from utils_extraction.pseudo_label import validate_pseudo_label_config
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
@@ -73,6 +74,7 @@ MethodType = Literal[
     "CCS-in-LR-span",
     "CCS+LR-in-span",
     "CCS-select-LR",
+    "pseudolabel",
 ]
 
 ex = Experiment()
@@ -169,6 +171,13 @@ def sacred_config():
         "max_iter": 10_000,
         "fit_intercept": True,
     }
+    # Pseudo-labeling method parameters.
+    pseudolabel = dict(
+        n_rounds=1,
+        select_fn="high_confidence_consistency",
+        prob_threshold=0.8,
+        label_fn="argmax",
+    )
 
     # Saving
     save_dir = "extraction_results"
@@ -246,6 +255,8 @@ def _format_config(config: dict) -> dict:
     # TODO: validate location more extensively.
     if config["location"] == "decoder" and config["layer"] < 0:
         config["layer"] += config["num_layers"]
+
+    validate_pseudo_label_config(config["pseudolabel"])
 
     return config
 
@@ -497,6 +508,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             num_orthogonal_directions=_config["num_orthogonal_directions"],
             span_dirs_combination=_config["span_dirs_combination"],
             log_reg=_config["log_reg"],
+            pseudolabel=_config["pseudolabel"],
         )
         kwargs = dict(
             train_data_dict=train_data_dict,
@@ -563,11 +575,18 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         if fit_result:
             if _config["save_fit_result"]:
-                fit_result = {
-                    k: v
-                    for k, v in fit_result.items()
-                    if k not in ("best_probe", "all_probes")
-                }
+                if not isinstance(fit_result, (list, tuple)):
+                    fit_result = [fit_result]
+                fit_result = [
+                    {
+                        k: v
+                        for k, v in fr.items()
+                        if k not in ("best_probe", "all_probes")
+                    }
+                    for fr in fit_result
+                ]
+                if len(fit_result) == 1:
+                    fit_result = fit_result[0]
                 save_fit_result(fit_result, run_dir, method, logger=_log)
             if _config["save_fit_plots"]:
                 save_fit_plots(fit_result, run_dir, method, logger=_log)
@@ -618,7 +637,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         # TODO: standardize losses
         # Mean losses over all eval datasets and all prompts.
-        if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"]:
+        if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR", "pseudolabel"]:
             loss_names = list(loss_dict[list(loss_dict.keys())[0]][0].keys())
             mean_losses = {}
             for loss_name in loss_names:
@@ -692,6 +711,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                     "CCS-in-LR-span",
                     "CCS+LR-in-span",
                     "CCS-select-LR",
+                    "pseudolabel",
                 ]:
                     for loss_name, loss in loss_dict[test_set][prompt_idx].items():
                         eval_result[loss_name] = loss

@@ -31,12 +31,20 @@ from utils_extraction.classifier import (
 from utils_extraction.data_utils import getConcat, getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
 from utils_extraction.projection import IdentityReduction, myReduction
+from utils_extraction.pseudo_label import train_pseudo_label
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
 SUPERVISED_METHODS = ("LR", "CCS+LR")
 
 EvalClassificationMethodType = Literal[
-    "LR", "BSS", "CCS", "CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR"
+    "LR",
+    "BSS",
+    "CCS",
+    "CCS+LR",
+    "CCS-in-LR-span",
+    "CCS+LR-in-span",
+    "CCS-select-LR",
+    "pseudolabel",
 ]
 
 
@@ -938,6 +946,34 @@ def mainResults(
             load_utils.save_orthogonal_directions(
                 orthogonal_dirs, intercepts, run_dir, seed, run_id
             )
+    elif classification_method == "pseudolabel":
+        if labeled_train_data_dict is None:
+            raise ValueError(
+                "labeled_train_data_dict must be provided for pseudo_label."
+            )
+
+        pseudolabel_config = train_kwargs.pop("pseudolabel", None)
+        if pseudolabel_config is None:
+            raise ValueError("pseudolabel config must be provided.")
+
+        # Use train_prefix for the labeled data and test_prefix for the
+        # unlabeled data.
+        probes, fit_result = train_pseudo_label(
+            data_dict,
+            labeled_train_data_dict,
+            train_data_dict,
+            permutation_dict,
+            train_prefix,
+            test_prefix,
+            pseudolabel_config,
+            project_along_mean_diff=project_along_mean_diff,
+            projection_model=projection_model,
+            train_kwargs=train_kwargs,
+            device=device,
+            logger=logger,
+        )
+        # Use the last probe as the classification model.
+        classify_model = probes[-1]
     elif classification_method == "BSS":
         if project_along_mean_diff:
             raise ValueError("BSS does not support project_along_mean_diff")
@@ -1128,6 +1164,7 @@ def eval(
                 "CCS-in-LR-span",
                 "CCS+LR-in-span",
                 "CCS-select-LR",
+                "pseudolabel",
             ]:
                 device = classify_model.device
                 x0, x1 = data

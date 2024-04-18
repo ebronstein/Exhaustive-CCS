@@ -107,17 +107,27 @@ def save_fit_result(fit_result: dict, run_dir: str, method: str, logger=None):
         logger.info(f"Saved fit result for {method} to {fit_result_path}")
 
 
-def save_fit_plots(fit_result: dict, run_dir: str, method: str, logger=None):
+def save_fit_plots(
+    fit_result: Union[dict, list[dict]], run_dir: str, method: str, logger=None
+):
     train_dir = get_train_dir(run_dir)
-    fit_plots_dir = os.path.join(train_dir, f"fit_plots_{method}")
-    if not os.path.exists(fit_plots_dir):
-        os.makedirs(fit_plots_dir)
+    if not isinstance(fit_result, list):
+        fit_result = [fit_result]
 
-    history_save_path = os.path.join(fit_plots_dir, "history.png")
-    plot_history(fit_result, save_path=history_save_path, logger=logger)
+    for i, fit_result_i in enumerate(fit_result):
+        subdir = f"fit_plots_{method}"
+        if len(fit_result) > 1:
+            subdir = f"{subdir}_{i}"
 
-    accuracy_save_path = os.path.join(fit_plots_dir, "accuracy.png")
-    plot_accuracy(fit_result, save_path=accuracy_save_path)
+        fit_plots_dir = os.path.join(train_dir, subdir)
+        if not os.path.exists(fit_plots_dir):
+            os.makedirs(fit_plots_dir)
+
+        history_save_path = os.path.join(fit_plots_dir, "history.png")
+        plot_history(fit_result_i, save_path=history_save_path, logger=logger)
+
+        accuracy_save_path = os.path.join(fit_plots_dir, "accuracy.png")
+        plot_accuracy(fit_result_i, save_path=accuracy_save_path)
 
 
 def save_params(save_dir, coef: np.ndarray, intercept: Optional[np.ndarray]):
