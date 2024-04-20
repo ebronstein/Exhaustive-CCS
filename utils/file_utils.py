@@ -12,13 +12,18 @@ FULL_MODEL_NAME_TO_SHORT_NAME = {
     "microsoft/deberta-v2-xxlarge-mnli": "deberta-v2-xxlarge-mnli",
 }
 
+DATA_PATH_TO_SHORT_NAME = {
+    "/nas/ucb/nlauffer/datasets/llama-2-13b-chat": "meta-llama-Llama-2-13b-chat-hf"
+}
+
 
 def get_model_short_name(model_str: str, replace_slash: bool = True) -> str:
     """Get the short name of a model.
 
-    Checks the following short names and returns the first one that is valide
+    Checks the following short names and returns the first one that is valid
     (i.e., it's in the HuggingFace Hub):
     - If the model is in `FULL_MODEL_NAME_TO_SHORT_NAME`, return the corresponding short name.
+    - If the model is in `DATA_PATH_TO_SHORT_NAME`, return the corresponding short name.
     - The last part of the model name (e.g., "t5-11b" for "path/to/t5-11b").
     - The last two parts of the model name (e.g., "EleutherAI/gpt-j-6B" for "path/to/EleutherAI/gpt-j-6B").
 
@@ -29,6 +34,9 @@ def get_model_short_name(model_str: str, replace_slash: bool = True) -> str:
 
     if model_str in FULL_MODEL_NAME_TO_SHORT_NAME:
         return FULL_MODEL_NAME_TO_SHORT_NAME[model_str]
+
+    if model_str in DATA_PATH_TO_SHORT_NAME:
+        return DATA_PATH_TO_SHORT_NAME[model_str]
 
     short_names = [
         model_str.split("/")[-1],
