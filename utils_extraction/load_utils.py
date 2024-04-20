@@ -1,5 +1,6 @@
 import json
 import os
+import pickle
 from pathlib import Path
 from typing import Optional, Union
 
@@ -151,16 +152,23 @@ def get_eval_results_path(run_dir: str, dataset: str) -> str:
 
 def get_permutation_dict_path(run_dir: str, dataset: str) -> str:
     eval_dir = get_eval_dir(run_dir, dataset)
-    return os.path.join(eval_dir, "train_test_split.npy")
+    return os.path.join(eval_dir, "train_test_split.pickle")
 
 
 def save_permutation_dict(permutation_dict: PermutationDictType, run_dir: str):
-    for ds, ds_permutation_dict in permutation_dict.items():
+    for ds, ds_permutation in permutation_dict.items():
+        if len(ds_permutation) != 2:
+            raise ValueError(
+                f"Expected permutation_dict to have length 2, got {len(ds_permutation)}"
+            )
+        ds_permutation = (ds_permutation[0].tolist(), ds_permutation[1].tolist())
         permutation_dict_path = get_permutation_dict_path(run_dir, ds)
         permutation_dict_dir = os.path.dirname(permutation_dict_path)
         if not os.path.exists(permutation_dict_dir):
             os.makedirs(permutation_dict_dir)
-        np.save(permutation_dict_path, ds_permutation_dict)
+
+        with open(permutation_dict_path, "wb") as f:
+            pickle.dump(ds_permutation, f)
 
 
 def maybe_append_project_suffix(method, project_along_mean_diff):
