@@ -13,7 +13,9 @@ FULL_MODEL_NAME_TO_SHORT_NAME = {
 }
 
 DATA_PATH_TO_SHORT_NAME = {
-    "/nas/ucb/nlauffer/datasets/llama-2-13b-chat": "meta-llama-Llama-2-13b-chat-hf"
+    "/nas/ucb/nlauffer/datasets/llama-2-7b-chat": "meta-llama-Llama-2-7b-chat-hf",
+    "/nas/ucb/nlauffer/datasets/llama-2-13b-chat": "meta-llama-Llama-2-13b-chat-hf",
+    "/nas/ucb/nlauffer/datasets/llama-2-70b-chat": "meta-llama-Llama-2-70b-chat-hf",
 }
 
 
