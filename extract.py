@@ -162,7 +162,7 @@ def sacred_config():
     # For the latter, if there are multiple runs, the latest run will be used.
     # If None, orthogonal directions will be trained from scratch.
     load_orthogonal_directions_dir: Optional[str] = None
-    span_dirs_combination: SpanDirsCombination = "linear"
+    span_dirs_combination: SpanDirsCombination = "convex"
     device: Literal["cuda", "cpu"] = "cuda"
     # Logistic regression parameters. See sklearn.linear_model.LogisticRegression.
     log_reg = {
