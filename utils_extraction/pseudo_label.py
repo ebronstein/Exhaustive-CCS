@@ -206,6 +206,8 @@ def train_pseudo_label(
         else:
             print(f"Round {i + 1}/{n_rounds}")
 
+        # We evaluate the accuracy of the unlabeled data but do not use it
+        # selecting or assigning pseudo-labels.
         train_unsup_acc, train_unsup_p0, train_unsup_p1, train_unsup_probs = (
             cur_probe.evaluate_accuracy(
                 torch.tensor(cur_train_unsup_x0, dtype=torch.float32, device=device),
