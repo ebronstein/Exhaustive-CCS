@@ -343,12 +343,27 @@ My dad answered this question incorrectly.",
 (This one is tricky -- even my teacher got it wrong!)",
 }
 
-confusion_suffix = {
+# Prefixes for confusion settings. The key is the name of the confusion setting,
+# and the value is a list of prefixes, where the partition index is used to
+# index into this list. For example, if the confusion setting is "bananashed",
+# the prefix is "Banana" for partition index 0 and "Shed" for partition index 1.
+confusion_prefix_for_partition_index = {"bananashed": ["Banana", "Shed"]}
+
+# Suffixes for confusion settings. The key is the name of the confusion setting,
+# and the value is a list of suffixes, where the partition index is used to
+# index into this list. For example, if the confusion setting is "bananashed",
+# the suffix is "Banana" for partition index 0 and "Shed" for partition index 1.
+confusion_suffix_for_partition_index = {
     "dot": ["."],
     "thatsright": ["That's right!"],
     "mark": ["Mark for this question:"],
     "bananashed": ["Banana", "Shed"],
 }
+
+# TODO: add to this as needed.
+# Prompts for which "A:" should NOT be appended after the question and before the
+# answer.
+CONFUSION_PREFIX_NOT_APPEND_A = {"normal", "bananashed"}
 
 
 class MyPrompts:
@@ -377,9 +392,7 @@ class MyPrompts:
             if set_name in prompt_dict.keys():
                 num += len(prompt_dict[set_name])
             if set_name not in ["ag-news", "dbpedia-14"]:
-                num += len(
-                    DatasetTemplates(*getLoadName(set_name)).all_template_names
-                )
+                num += len(DatasetTemplates(*getLoadName(set_name)).all_template_names)
             if set_name == "copa":
                 num -= 4  # do not use the last four prompts
             res.append(num)
@@ -414,9 +427,7 @@ class MyPrompts:
         """
 
         tmp = deepcopy(example)
-        lbl_tag = (
-            "label" if self.set_name != "story_cloze" else "answer_right_ending"
-        )
+        lbl_tag = "label" if self.set_name != "story_cloze" else "answer_right_ending"
 
         # Check if the prompt index corresponds to a prompt from `promptsource`
         # or a custom prompt. `promptsource` prompts come first (low index),
@@ -442,16 +453,12 @@ class MyPrompts:
                     if typ == "correct":
                         formatter.append(self.label_dict[qaexamples[1][idx]])
                     elif typ == "incorrect":
-                        formatter.append(
-                            self.label_dict[1 - qaexamples[1][idx]]
-                        )
+                        formatter.append(self.label_dict[1 - qaexamples[1][idx]])
                     else:  # "e.g.0_text", take qaexamples[0].loc[idx]
                         formatter.append(qaexamples[0].loc[idx][typ])
                 else:
                     formatter.append(
-                        self.label_dict[choices[int(w)]]
-                        if w in ["0", "1"]
-                        else tmp[w]
+                        self.label_dict[choices[int(w)]] if w in ["0", "1"] else tmp[w]
                     )
             # token = [w if w not in ["0", "1"]
             #          else choices[int(w)] for w in token]
@@ -464,9 +471,7 @@ class MyPrompts:
                 return question, ["choice 1", "choice 2"]
 
 
-def get_label_and_choices(
-    label: int, num_choices: int
-) -> tuple[int, list[int]]:
+def get_label_and_choices(label: int, num_choices: int) -> tuple[int, list[int]]:
     """Get the label and the choices for the question.
 
     Args:
@@ -515,6 +520,32 @@ def get_confusion_prefix_and_suffix(confusion: str):
     return confusion_prefix, confusion_suffix
 
 
+def maybe_add_prefix_to_question(
+    question: str, confusion_prefix_name: str, partition_index: int
+) -> str:
+    # Maybe append "?" if confusion_prefix_name.
+    if confusion_prefix_name not in CONFUSION_PREFIX_NOT_APPEND_A:
+        if question[-1] == " ":
+            question = question[:-1] + "?"
+        elif not is_punctuation(question[-1]):
+            question = question + "?"
+
+    # TODO: handle this case more generally.
+    if confusion_prefix_name == "bananashed":
+        confusion_prefix_str = confusion_prefix_for_partition_index[
+            confusion_prefix_name
+        ][partition_index]
+        question = confusion_prefix_str + " " + question
+    else:
+        question = confusion_prefix[confusion_prefix_name].format(question)
+
+    # Maybe add an A: before the answer.
+    if confusion_prefix_name not in CONFUSION_PREFIX_NOT_APPEND_A:
+        question = question + "\nA: "
+
+    return question
+
+
 def concatAnswer(
     question: str, ans: str, mdl_name: str, confusion: str, partition_index: int
 ) -> str:
@@ -524,22 +555,14 @@ def concatAnswer(
         partition_index: The index of the dataset partition to use. May be used
             to randomly change the prompt while evenly partitioning the dataset.
     """
-    confusion_prefix_name, confusion_suffix_name = (
-        get_confusion_prefix_and_suffix(confusion)
+    confusion_prefix_name, confusion_suffix_name = get_confusion_prefix_and_suffix(
+        confusion
     )
 
-    # Append "?" if confusion_prefix_name is not "normal".
-    if confusion_prefix_name != "normal":
-        if question[-1] == " ":
-            question = question[:-1] + "?"
-        elif not is_punctuation(question[-1]):
-            question = question + "?"
-
-    question = confusion_prefix[confusion_prefix_name].format(question)
-
-    # Add an A: before the answer.
-    if confusion_prefix_name != "normal":
-        question = question + "\nA: "
+    # Add prefix.
+    question = maybe_add_prefix_to_question(
+        question, confusion_prefix_name, partition_index
+    )
 
     if (
         "gpt" not in mdl_name and "roberta" not in mdl_name
@@ -552,9 +575,9 @@ def concatAnswer(
     ans = ans.rstrip(" ")
 
     if confusion_suffix_name is not None:
-        confusion_suffix_str = confusion_suffix[confusion_suffix_name][
-            partition_index
-        ]
+        confusion_suffix_str = confusion_suffix_for_partition_index[
+            confusion_suffix_name
+        ][partition_index]
         confusion_suffix_str = confusion_suffix_str.lstrip(" ")
 
         # If answer ends with punctuation and suffix starts with punctuation,
@@ -570,9 +593,7 @@ def concatAnswer(
         # If answer ends with punctuation and suffix does not start with
         # punctuation, prepend a space to the suffix to ensure there is a space
         # in between.
-        elif is_punctuation(ans[-1]) and not is_punctuation(
-            confusion_suffix_str[0]
-        ):
+        elif is_punctuation(ans[-1]) and not is_punctuation(confusion_suffix_str[0]):
             confusion_suffix_str = " " + confusion_suffix_str
 
         ans += confusion_suffix_str
@@ -603,10 +624,10 @@ def format_question_answer(question, ans, mdl_name) -> str:
 
 def prompt_partition_indices(num_examples: int, confusion: str):
     """Return indices that partition the dataset based on `confusion`."""
-    confusion_prefix_name, confusion_suffix_name = (
-        get_confusion_prefix_and_suffix(confusion)
+    confusion_prefix_name, confusion_suffix_name = get_confusion_prefix_and_suffix(
+        confusion
     )
-    if confusion_suffix_name == "bananashed":
+    if confusion_prefix_name == "bananashed" or confusion_suffix_name == "bananashed":
         # Generate indices that randomly partition the dataset in half.
         indices = [0] * (num_examples // 2) + [1] * (num_examples // 2)
         if num_examples % 2 == 1:
@@ -688,9 +709,7 @@ def constructPrompt(
         )
 
         concat_data_list = [
-            concatAnswer(
-                question, w, mdl_name, confusion, partition_indices[idx]
-            )
+            concatAnswer(question, w, mdl_name, confusion, partition_indices[idx])
             for w in ans_lis
         ]
         if checkLengthExceed(tokenizer, concat_data_list):
@@ -699,9 +718,7 @@ def constructPrompt(
         # append to the result
         # Question with an empty answer.
         result["null"].append(
-            concatAnswer(
-                question, "", mdl_name, confusion, partition_indices[idx]
-            )
+            concatAnswer(question, "", mdl_name, confusion, partition_indices[idx])
         )
         # Question with a correct answer and a wrong answer.
         for i in range(2):
