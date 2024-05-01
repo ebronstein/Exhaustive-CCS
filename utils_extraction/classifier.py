@@ -39,6 +39,7 @@ CCS_LR_KWARGS_NAMES = [
     "sup_weight",
     "consistency_weight",
     "confidence_weight",
+    "weight_decay",
     "opt",
 ]
 
@@ -368,14 +369,15 @@ class ContrastPairClassifier(nn.Module):
         sup_weight=1.0,
         consistency_weight=1.0,
         confidence_weight=1.0,
+        weight_decay: float = 0.0,
         opt: str = "sgd",
         eval_freq: int = 20,
         logger=None,
     ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
         if opt == "sgd":
-            optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=0)
+            optimizer = optim.SGD(self.parameters(), lr=lr, weight_decay=weight_decay)
         elif opt == "adam":
-            optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=0)
+            optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay)
         else:
             raise ValueError(f"Unknown optimizer: {opt}")
 
@@ -504,6 +506,7 @@ def fit_ccs_lr(
     sup_weight=1.0,
     consistency_weight=1.0,
     confidence_weight=1.0,
+    weight_decay: float = 0.0,
     opt: str = "sgd",
     include_bias: bool = True,
     verbose=False,
@@ -566,6 +569,7 @@ def fit_ccs_lr(
             sup_weight=sup_weight,
             consistency_weight=consistency_weight,
             confidence_weight=confidence_weight,
+            weight_decay=weight_decay,
             opt=opt,
             logger=logger,
         )

@@ -61,6 +61,7 @@ PrefixType = Literal[
     "normal-mark",
     "normal-thatsright",
     "normal-bananashed",
+    "bananashed",
 ]
 
 MethodType = Literal[
@@ -149,6 +150,7 @@ def sacred_config():
     confidence_weight: float = 1.0
     lr: float = 1e-2
     include_bias: bool = True
+    weight_decay: float = 0.0
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
     projected_sgd: bool = True
@@ -504,6 +506,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             confidence_weight=_config["confidence_weight"],
             lr=_config["lr"],
             include_bias=_config["include_bias"],
+            weight_decay=_config["weight_decay"],
             opt=_config["opt"],
             num_orthogonal_directions=_config["num_orthogonal_directions"],
             span_dirs_combination=_config["span_dirs_combination"],
