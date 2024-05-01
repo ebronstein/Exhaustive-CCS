@@ -141,3 +141,5 @@ def plot_history(
     else:
         plt.savefig(save_path)
         plt.close()
+
+    return df
