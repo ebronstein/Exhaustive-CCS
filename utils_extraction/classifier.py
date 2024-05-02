@@ -420,6 +420,8 @@ class ContrastPairClassifier(nn.Module):
                         test_unsup_x1,
                         unsup_weight=unsup_weight,
                         sup_weight=sup_weight,
+                        consistency_weight=consistency_weight,
+                        confidence_weight=confidence_weight,
                     )
                 train_sup_acc = self.evaluate_accuracy(
                     train_sup_x0, train_sup_x1, train_sup_y
