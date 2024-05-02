@@ -3,7 +3,7 @@ import pandas as pd
 import seaborn as sns
 
 
-def plot_accuracy(fit_result, save_path=None):
+def plot_accuracy(fit_result, acc_name_prefix="", save_path=None):
     eval_histories = fit_result["eval_histories"]
     data = []
 
@@ -11,7 +11,7 @@ def plot_accuracy(fit_result, save_path=None):
         epochs = history["epoch"]
         for split in ["train", "test"]:
             for acc_dataset in ["sup_acc", "unsup_acc"]:
-                acc_name = f"{split}_{acc_dataset}"
+                acc_name = f"{acc_name_prefix}{split}_{acc_dataset}"
                 acc_list = history[acc_name]
                 for epoch, acc_val in zip(epochs, acc_list):
                     data.append(
@@ -63,8 +63,7 @@ def plot_history(
         vars_to_plot = fit_result["train_histories"][0].keys()
     else:
         if not all(
-            var_name in fit_result["train_histories"][0]
-            for var_name in vars_to_plot
+            var_name in fit_result["train_histories"][0] for var_name in vars_to_plot
         ):
             raise ValueError(
                 f"vars_to_plot contains unknown variable names: {vars_to_plot}"
