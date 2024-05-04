@@ -242,41 +242,42 @@ def train_pseudo_label(
 
         # Get pseudo-labeled x data.
         n_pairs_with_pseudolabels = pseudolabel_mask.sum()
-        broadcast_pseudolabel_mask = np.broadcast_to(
-            pseudolabel_mask, cur_train_unsup_x0.shape
-        )
-        cur_train_unsup_x0_with_pseudolabels = cur_train_unsup_x0[
-            broadcast_pseudolabel_mask
-        ].reshape((n_pairs_with_pseudolabels, -1))
-        cur_train_unsup_x1_with_pseudolabels = cur_train_unsup_x1[
-            broadcast_pseudolabel_mask
-        ].reshape((n_pairs_with_pseudolabels, -1))
-
-        # Concatenate original labeled data with the pseudo-labeled data.
-        cur_train_sup_x0 = np.concatenate(
-            [cur_train_sup_x0, cur_train_unsup_x0_with_pseudolabels], axis=0
-        )
-        cur_train_sup_x1 = np.concatenate(
-            [cur_train_sup_x1, cur_train_unsup_x1_with_pseudolabels], axis=0
-        )
-        cur_train_sup_y = np.concatenate(
-            [cur_train_sup_y, train_unsup_pseudolabels], axis=0
-        )
-
-        # Update unlabeled data to be the remaining un-pseudo-labeled data.
-        # This is the unlabeled data on which the accuracy is evaluated on this
-        # round.
         n_pairs_without_pseudolabels = len(pseudolabel_mask) - n_pairs_with_pseudolabels
-        # If all pairs are pseudo-labeled, keep all of the unsupervised data
-        # for evaluation.
-        if n_pairs_without_pseudolabels != 0:
-            cur_train_unsup_x0 = cur_train_unsup_x0[
-                ~broadcast_pseudolabel_mask
-            ].reshape((n_pairs_without_pseudolabels, -1))
-            cur_train_unsup_x1 = cur_train_unsup_x1[
-                ~broadcast_pseudolabel_mask
-            ].reshape((n_pairs_without_pseudolabels, -1))
-            cur_train_unsup_y = cur_train_unsup_y[~pseudolabel_mask.squeeze(1)]
+        if n_pairs_with_pseudolabels != 0:
+            broadcast_pseudolabel_mask = np.broadcast_to(
+                pseudolabel_mask, cur_train_unsup_x0.shape
+            )
+            cur_train_unsup_x0_with_pseudolabels = cur_train_unsup_x0[
+                broadcast_pseudolabel_mask
+            ].reshape((n_pairs_with_pseudolabels, -1))
+            cur_train_unsup_x1_with_pseudolabels = cur_train_unsup_x1[
+                broadcast_pseudolabel_mask
+            ].reshape((n_pairs_with_pseudolabels, -1))
+
+            # Concatenate original labeled data with the pseudo-labeled data.
+            cur_train_sup_x0 = np.concatenate(
+                [cur_train_sup_x0, cur_train_unsup_x0_with_pseudolabels], axis=0
+            )
+            cur_train_sup_x1 = np.concatenate(
+                [cur_train_sup_x1, cur_train_unsup_x1_with_pseudolabels], axis=0
+            )
+            cur_train_sup_y = np.concatenate(
+                [cur_train_sup_y, train_unsup_pseudolabels], axis=0
+            )
+
+            # Update unlabeled data to be the remaining un-pseudo-labeled data.
+            # This is the unlabeled data on which the accuracy is evaluated on this
+            # round.
+            # If all pairs are pseudo-labeled, keep all of the unsupervised data
+            # for evaluation.
+            if n_pairs_without_pseudolabels != 0:
+                cur_train_unsup_x0 = cur_train_unsup_x0[
+                    ~broadcast_pseudolabel_mask
+                ].reshape((n_pairs_without_pseudolabels, -1))
+                cur_train_unsup_x1 = cur_train_unsup_x1[
+                    ~broadcast_pseudolabel_mask
+                ].reshape((n_pairs_without_pseudolabels, -1))
+                cur_train_unsup_y = cur_train_unsup_y[~pseudolabel_mask.squeeze(1)]
 
         # Fit the model to the pseudo-labeled data and original labeled data.
         fit_result = fit_ccs_lr(
@@ -331,6 +332,11 @@ def train_pseudo_label(
 
         fit_results.append(fit_result)
         probes.append(cur_probe)
+
+        logger.info(f"Number of new pseudo-labels: {n_pairs_with_pseudolabels}")
+        logger.info(
+            f"Number of remaining pairs without pseudo-labels: {n_pairs_without_pseudolabels}"
+        )
 
         # If all pairs are pseudo-labeled, stop training.
         if n_pairs_without_pseudolabels == 0:
