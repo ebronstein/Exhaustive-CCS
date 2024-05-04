@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import pickle
@@ -9,7 +10,12 @@ import pandas as pd
 
 from utils.file_utils import get_model_short_name
 from utils.plotting import plot_accuracy, plot_history
-from utils.types import DataDictType, Mode, PermutationDictType
+from utils.types import (
+    DataDictType,
+    Mode,
+    PermutationDictType,
+    PrefixPermutationDictType,
+)
 
 ALL_DATASETS = [
     "imdb",
@@ -78,14 +84,26 @@ def get_eval_dir(run_dir: str, dataset: str) -> str:
     return os.path.join(run_dir, "eval", dataset)
 
 
-def get_params_dir(run_dir: str, method: str, prefix: str) -> str:
-    return os.path.join(run_dir, "params", f"{method}_{prefix}")
+def get_combined_prefix_str(prefix: str, labeled_prefix: Optional[str] = None) -> str:
+    if not labeled_prefix:
+        return prefix
+    return f"prefix_{prefix}-labeled_prefix_{labeled_prefix}"
+
+
+def get_params_dir(
+    run_dir: str, method: str, prefix: str, labeled_prefix: Optional[str] = None
+) -> str:
+    return os.path.join(
+        run_dir,
+        "params",
+        f"{method}_{get_combined_prefix_str(prefix, labeled_prefix=labeled_prefix)}",
+    )
 
 
 def load_params(
-    run_dir: str, method: str, prefix: str
+    run_dir: str, method: str, prefix: str, labeled_prefix: Optional[str] = None
 ) -> tuple[np.ndarray, Optional[np.ndarray]]:
-    path = get_params_dir(run_dir, method, prefix)
+    path = get_params_dir(run_dir, method, prefix, labeled_prefix=labeled_prefix)
     coef_path = os.path.join(path, COEF_FILENAME)
     intercept_path = os.path.join(path, INTERCEPT_FILENAME)
     if not os.path.exists(coef_path):
@@ -145,30 +163,38 @@ def get_train_results_path(run_dir: str) -> str:
     return os.path.join(run_dir, "train.csv")
 
 
-def get_eval_results_path(run_dir: str, dataset: str) -> str:
+def get_eval_results_path(run_dir: str, dataset: str, append_time: bool = False) -> str:
     eval_dir = get_eval_dir(run_dir, dataset)
-    return os.path.join(eval_dir, "eval.csv")
+    if append_time:
+        filename = f"eval_{datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')}.csv"
+    else:
+        filename = "eval.csv"
+    return os.path.join(eval_dir, filename)
 
 
-def get_permutation_dict_path(run_dir: str, dataset: str) -> str:
+def get_permutation_dict_path(run_dir: str, dataset: str, prefix: str) -> str:
     eval_dir = get_eval_dir(run_dir, dataset)
-    return os.path.join(eval_dir, "train_test_split.pickle")
+    return os.path.join(eval_dir, f"train_test_split-prefix_{prefix}.pickle")
 
 
-def save_permutation_dict(permutation_dict: PermutationDictType, run_dir: str):
-    for ds, ds_permutation in permutation_dict.items():
-        if len(ds_permutation) != 2:
-            raise ValueError(
-                f"Expected permutation_dict to have length 2, got {len(ds_permutation)}"
-            )
-        ds_permutation = (ds_permutation[0].tolist(), ds_permutation[1].tolist())
-        permutation_dict_path = get_permutation_dict_path(run_dir, ds)
+def save_permutation_dict(permutation_dict: PrefixPermutationDictType, run_dir: str):
+    for prefix, ds_to_perm in permutation_dict.items():
+        formatted_ds_to_perm = {}
+        for ds, perm in ds_to_perm.items():
+            if len(perm) != 2:
+                raise ValueError(
+                    f"Expected permutation_dict[{prefix}][{ds}] to have length 2, got {len(perm)}"
+                )
+            perm = (perm[0].tolist(), perm[1].tolist())
+            formatted_ds_to_perm[ds] = perm
+
+        permutation_dict_path = get_permutation_dict_path(run_dir, ds, prefix)
         permutation_dict_dir = os.path.dirname(permutation_dict_path)
         if not os.path.exists(permutation_dict_dir):
             os.makedirs(permutation_dict_dir)
 
         with open(permutation_dict_path, "wb") as f:
-            pickle.dump(ds_permutation, f)
+            pickle.dump(formatted_ds_to_perm, f)
 
 
 def maybe_append_project_suffix(method, project_along_mean_diff):
@@ -369,7 +395,7 @@ def load_hidden_states_for_datasets(
     demean=True,
     mode="minus",
     logger=None,
-) -> tuple[DataDictType, PermutationDictType]:
+) -> DataDictType:
     """Load hidden states and labels for the given datasets.
 
     Args:

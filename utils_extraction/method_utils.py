@@ -15,6 +15,7 @@ from utils.types import (
     Mode,
     PermutationDictType,
     PrefixDataDictType,
+    PrefixPermutationDictType,
     PromptIndicesDictType,
 )
 from utils_extraction import load_utils, metrics
@@ -662,13 +663,14 @@ class myClassifyModel(LogisticRegression):
 def mainResults(
     data_dict: PrefixDataDictType,
     train_data_dict: PromptIndicesDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     test_dict: PromptIndicesDictType,
     projection_dict: PromptIndicesDictType,
     mode: Mode,
     train_prefix: str,
     test_prefix: str,
     labeled_train_data_dict: Optional[PromptIndicesDictType] = None,
+    labeled_train_prefix: Optional[str] = None,
     projection_method="PCA",
     n_components: int = 2,
     projection_only=False,
@@ -713,6 +715,9 @@ def mainResults(
         labeled_train_data_dict (dict, optional): Dictionary mapping from
             labeled train dataset names to prompt indices to use.
         projection_method (str, optional): Projection method. Defaults to "PCA".
+        labeled_train_prefix (str): Prefix for labeled train data. Only
+            applicable if using both labeled and unlabeled data, in which
+            case `train_prefix` is used for the unlabeled data.
         n_components (int, optional): The dimension you want to reduce to. -1 means no
             projection will be implemented. Defaults to 2.
         projection_only (bool, optional): When set to true, will immediately return after
@@ -767,7 +772,7 @@ def mainResults(
     test_prefix_data_dict = data_dict[test_prefix]
 
     # TODO: should the projection be fit to the train prefix, test prefix, or
-    # both?
+    # both? How should the train_labeled_prefix be used?
     # Concatenate all the data (not split) to do PCA.
     # Shape: [num_total_samples, num_features]. If there is a constant number of
     # prompts per dataset, num_total_samples = num_datasets * num_prompts
@@ -806,7 +811,7 @@ def mainResults(
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
             data_dict=train_prefix_data_dict,
-            permutation_dict=permutation_dict,
+            permutation_dict=permutation_dict[train_prefix],
             projection_model=projection_model,
             split="train",
             project_along_mean_diff=project_along_mean_diff,
@@ -828,6 +833,8 @@ def mainResults(
     elif classification_method == "CCS+LR":
         if labeled_train_data_dict is None:
             raise ValueError("labeled_train_data_dict must be provided for CCS+LR.")
+        if labeled_train_prefix is None:
+            raise ValueError("labeled_train_prefix must be provided for CCS+LR.")
 
         # Use train_prefix for the labeled data and test_prefix for the
         # unlabeled data.
@@ -837,8 +844,8 @@ def mainResults(
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
-            train_prefix,
-            test_prefix,
+            labeled_train_prefix,  # Labeled train data prefix.
+            train_prefix,  # Unlabeled train data prefix.
             train_kwargs=train_kwargs,
             project_along_mean_diff=project_along_mean_diff,
             device=device,
@@ -849,6 +856,8 @@ def mainResults(
             raise ValueError(
                 "labeled_train_data_dict must be provided for CCS-in-LR-span."
             )
+        if labeled_train_prefix is None:
+            raise ValueError("labeled_train_prefix must be provided for CCS+LR.")
         if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
                 "num_orthogonal_directions required for CCS-in-LR-span method."
@@ -859,12 +868,12 @@ def mainResults(
         # unlabeled data.
         classify_model, fit_result, orthogonal_dirs, intercepts = train_ccs_in_lr_span(
             data_dict,
-            permutation_dict,
+            permutation_dict[train_prefix],
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
-            train_prefix,
-            test_prefix,
+            labeled_train_prefix,  # Labeled train data prefix.
+            train_prefix,  # Unlabeled train data prefix.
             num_orthogonal_directions,
             mode,
             load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
@@ -883,6 +892,8 @@ def mainResults(
             raise ValueError(
                 f"labeled_train_data_dict must be provided for {classification_method}."
             )
+        if labeled_train_prefix is None:
+            raise ValueError("labeled_train_prefix must be provided for CCS+LR.")
         if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
                 f"num_orthogonal_directions required for {classification_method} method."
@@ -897,8 +908,8 @@ def mainResults(
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
-            train_prefix,
-            test_prefix,
+            labeled_train_prefix,  # Labeled train data prefix.
+            train_prefix,  # Unlabeled train data prefix.
             num_orthogonal_directions,
             load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
             projected_sgd=projected_sgd,
@@ -917,6 +928,8 @@ def mainResults(
             raise ValueError(
                 "labeled_train_data_dict must be provided for CCS-select-LR."
             )
+        if labeled_train_prefix is None:
+            raise ValueError("labeled_train_prefix must be provided for CCS+LR.")
         if "num_orthogonal_directions" not in train_kwargs:
             raise ValueError(
                 "num_orthogonal_directions required for CCS-select-LR method."
@@ -931,8 +944,8 @@ def mainResults(
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
-            train_prefix,
-            test_prefix,
+            labeled_train_prefix,  # Labeled train data prefix.
+            train_prefix,  # Unlabeled train data prefix.
             num_orthogonal_directions,
             mode,
             load_orthogonal_directions_run_dir=load_orthogonal_directions_run_dir,
@@ -951,6 +964,8 @@ def mainResults(
             raise ValueError(
                 "labeled_train_data_dict must be provided for pseudo_label."
             )
+        if labeled_train_prefix is None:
+            raise ValueError("labeled_train_prefix must be provided for CCS+LR.")
 
         pseudolabel_config = train_kwargs.pop("pseudolabel", None)
         if pseudolabel_config is None:
@@ -963,8 +978,8 @@ def mainResults(
             labeled_train_data_dict,
             train_data_dict,
             permutation_dict,
-            train_prefix,
-            test_prefix,
+            labeled_train_prefix,  # Labeled train data prefix.
+            train_prefix,  # Unlabeled train data prefix.
             pseudolabel_config,
             project_along_mean_diff=project_along_mean_diff,
             projection_model=projection_model,
@@ -982,7 +997,7 @@ def mainResults(
             getPair(
                 target_dict={key: [idx]},
                 data_dict=train_prefix_data_dict,
-                permutation_dict=permutation_dict,
+                permutation_dict=permutation_dict[train_prefix],
                 projection_model=projection_model,
             )
             for key, l in train_data_dict.items()
@@ -1004,7 +1019,7 @@ def mainResults(
         data, labels = make_contrast_pair_data(
             target_dict=train_data_dict,
             data_dict=train_prefix_data_dict,
-            permutation_dict=permutation_dict,
+            permutation_dict=permutation_dict[train_prefix],
             projection_model=projection_model,
             split="train",
             project_along_mean_diff=project_along_mean_diff,
@@ -1017,23 +1032,26 @@ def mainResults(
             logger.info(f"Fitting LR model, mode={mode}")
         classify_model.fit(data, labels, mode)
     else:
-        data, labels = make_contrast_pair_data(
-            target_dict=train_data_dict,
-            data_dict=train_prefix_data_dict,
-            permutation_dict=permutation_dict,
-            projection_model=projection_model,
-            split="train",
-            project_along_mean_diff=project_along_mean_diff,
-            split_pair=mode == "concat",
+        raise NotImplementedError(
+            f"Unimplemented classification method: {classification_method}"
         )
+        # data, labels = make_contrast_pair_data(
+        #     target_dict=train_data_dict,
+        #     data_dict=train_prefix_data_dict,
+        #     permutation_dict=permutation_dict,
+        #     projection_model=projection_model,
+        #     split="train",
+        #     project_along_mean_diff=project_along_mean_diff,
+        #     split_pair=mode == "concat",
+        # )
 
-        classify_model = myClassifyModel(classification_method, print_more=print_more)
-        classify_model.fit(data, labels)
+        # classify_model = myClassifyModel(classification_method, print_more=print_more)
+        # classify_model.fit(data, labels)
 
     eval_result = eval(
         test_prefix_data_dict,
         # Arbitrarily use the unsupervised permutation_dict.
-        permutation_dict,
+        permutation_dict[test_prefix],
         test_dict,
         mode,
         projection_dict=projection_dict,
@@ -1042,6 +1060,7 @@ def mainResults(
         classify_model=classify_model,
         projection_model=projection_model,
         train_prefix=train_prefix,
+        labeled_train_prefix=labeled_train_prefix,
         classification_method=classification_method,
         print_more=print_more,
         save_probs=save_probs,
@@ -1067,6 +1086,7 @@ def eval(
     classify_model=None,
     projection_model=None,
     train_prefix=None,
+    labeled_train_prefix: Optional[str] = None,
     classification_method: EvalClassificationMethodType = "CCS",
     print_more=False,
     save_probs=True,
@@ -1118,7 +1138,10 @@ def eval(
         if classification_method == "CCS+LR":
             raise NotImplementedError()
         coef, bias = load_utils.load_params(
-            run_dir, classification_method, train_prefix
+            run_dir,
+            classification_method,
+            train_prefix,
+            labeled_prefix=labeled_train_prefix,
         )
         if classification_method in ["CCS", "Random"]:
             classify_model = ConsistencyMethod.from_coef_and_bias(

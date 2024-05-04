@@ -124,8 +124,11 @@ def sacred_config():
     # supervised learning. The method must support the combination of the two.
     # Set to "burns" to use all the Burns datasets.
     labeled_datasets: Union[str, list[str]] = []
-    # Prefix to use for training.
+    # Prefix for main training data (`datasets`).
     prefix: PrefixType = "normal"
+    # Prefix for labeled training data (`labeled_datasets`). If not provided and
+    # labeled datasets are used, defaults to `prefix`.
+    labeled_prefix: Optional[PrefixType] = None
     # Prefix to use for evaluation. If None, the training prefix will be used.
     test_prefix: Optional[PrefixType] = None
     data_num: int = 1000
@@ -232,13 +235,24 @@ def _convert_dogmatics_to_standard(obj: Any) -> Any:
         return obj
 
 
-def _format_config(config: dict) -> dict:
-    if config["prefix"] not in typing.get_args(PrefixType):
-        raise ValueError(f"Invalid prefix: {config['prefix']}")
+def _validate_config(config: dict) -> None:
+    for key in ["prefix", "labeled_prefix"]:
+        if config[key] not in typing.get_args(PrefixType):
+            raise ValueError(f"Invalid {key}: {config[key]}")
+
     if any([method.startswith("RCCS") for method in config["method_list"]]):
         raise NotImplementedError("RCCS is not yet implemented.")
 
+    validate_pseudo_label_config(config["pseudolabel"])
+
+
+def _format_config(config: dict) -> dict:
     config = _convert_dogmatics_to_standard(config)
+
+    # Set default prefixes to the main training data prefix.
+    for key in ["labeled_prefix", "test_prefix"]:
+        if config[key] is None:
+            config[key] = config["prefix"]
 
     # Convert single strings to lists and remove duplicates.
     for key in ["datasets", "labeled_datasets", "eval_datasets", "method_list"]:
@@ -258,21 +272,29 @@ def _format_config(config: dict) -> dict:
     if config["location"] == "decoder" and config["layer"] < 0:
         config["layer"] += config["num_layers"]
 
-    validate_pseudo_label_config(config["pseudolabel"])
-
     return config
+
+
+def _check_config_subset_unmodified(config: dict, subset: dict) -> bool:
+    """Check if the subset of the config is unmodified from the original config."""
+    for key, value in subset.items():
+        if key not in config or config[key] != value:
+            return False
+    return True
 
 
 @ex.automain
 def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     _config = _format_config(_config)
+    _validate_config(_config)
+
     train_datasets = _config["datasets"]
     labeled_train_datasets = _config["labeled_datasets"]
     eval_datasets = _config["eval_datasets"]
     prefix = _config["prefix"]
-    test_prefix = (
-        _config["test_prefix"] if _config["test_prefix"] is not None else prefix
-    )
+    labeled_prefix = _config["labeled_prefix"]
+    test_prefix = _config["test_prefix"]
+    load_params_run_id = _config["load_params_run_id"]
 
     run_id = _run._id
     run_dir = os.path.join(exp_dir, run_id)
@@ -280,6 +302,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         os.makedirs(save_dir)
 
     if _config["eval_only"]:
+        # TODO: adapt this handle using different prefix, labeled_prefix, and
+        # test_prefix.
         load_exp_dir = load_utils.get_exp_dir(
             _config["load_params_save_dir"],
             _config["load_params_name"],
@@ -288,7 +312,6 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             seed,
             labeled_datasets=labeled_train_datasets,
         )
-        load_params_run_id = _config["load_params_run_id"]
         if load_params_run_id == "latest":
             load_params_run_id = load_utils.maximum_existing_run_id(load_exp_dir)
         load_run_dir = os.path.join(load_exp_dir, str(load_params_run_id))
@@ -306,6 +329,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 load_run_dir,
                 full_method_str,
                 prefix,
+                labeled_prefix=labeled_prefix,
             )
             if not os.path.exists(load_params_dir):
                 raise FileNotFoundError(
@@ -314,8 +338,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
     model_short_name = file_utils.get_model_short_name(model)
     _log.info(
-        "---------------- model = %s, prefix = %s, test_prefix - %s ----------------"
-        % (model_short_name, prefix, test_prefix)
+        "---------------- model = %s, prefix = %s, labeled_prefix = %s, test_prefix - %s ----------------"
+        % (model_short_name, prefix, labeled_prefix, test_prefix)
     )
 
     # TODO: look into how zero-shot results are being saved.
@@ -390,7 +414,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     eval_results = collections.defaultdict(list)
 
     # Generate data.
-    prefixes = set([prefix, test_prefix])
+    prefixes = set([prefix, labeled_prefix, test_prefix])
     mode_to_data = {}
     for method in _config["method_list"]:
         if method == "0-shot":
@@ -445,10 +469,15 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         data_dict = mode_to_data[mode]
         permutation_dict = {
-            ds: make_permutation_dict(data_dict[prefix][ds]) for ds in datasets_to_load
+            prefix_: {
+                ds: make_permutation_dict(data_dict[prefix_][ds])
+                for ds in datasets_to_load
+            }
+            for prefix_ in prefixes
         }
-        assert data_dict[prefix].keys() == set(datasets_to_load)
-        assert permutation_dict.keys() == set(datasets_to_load)
+        for prefix_ in prefixes:
+            assert data_dict[prefix_].keys() == set(datasets_to_load)
+            assert permutation_dict[prefix_].keys() == set(datasets_to_load)
 
         # TODO: maybe projection should get to use other datasets that are
         # not in the train and eval list. projection_dict is currently being
@@ -469,7 +498,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             ds: range(len(data_dict[prefix][ds])) for ds in train_datasets
         }
         labeled_train_data_dict = {
-            ds: range(len(data_dict[prefix][ds])) for ds in labeled_train_datasets
+            ds: range(len(data_dict[labeled_prefix][ds]))
+            for ds in labeled_train_datasets
         }
 
         test_dict = {ds: range(len(data_dict[test_prefix][ds])) for ds in eval_datasets}
@@ -482,18 +512,19 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         )
         method_ = method
         if method.startswith("RCCS"):
-            method_ = "CCS"
-            if method != "RCCS0":
-                # TODO: load constraints and old_biases from the correct directory for
-                # RCCS.
-                prev_rccs_params_dir = None
-                # TODO: replace this with call to parameter-loading function
-                # and use a different directory where the previous CCS params
-                # are stored.
-                constraints = np.load(os.path.join(prev_rccs_params_dir, "coef.npy"))
-                old_biases = np.load(
-                    os.path.join(prev_rccs_params_dir, "intercept.npy")
-                )
+            raise NotImplementedError()
+            # method_ = "CCS"
+            # if method != "RCCS0":
+            #     # TODO: load constraints and old_biases from the correct directory for
+            #     # RCCS.
+            #     prev_rccs_params_dir = None
+            #     # TODO: replace this with call to parameter-loading function
+            #     # and use a different directory where the previous CCS params
+            #     # are stored.
+            #     constraints = np.load(os.path.join(prev_rccs_params_dir, "coef.npy"))
+            #     old_biases = np.load(
+            #         os.path.join(prev_rccs_params_dir, "intercept.npy")
+            #     )
         else:
             constraints = None
 
@@ -520,6 +551,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             projection_dict=projection_dict,
             mode=mode,
             labeled_train_data_dict=labeled_train_data_dict,
+            labeled_train_prefix=labeled_prefix,
             projection_method="PCA",
             n_components=n_components,
             classification_method=method_,
@@ -537,6 +569,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 load_run_dir,
                 full_method_str,
                 prefix,
+                labeled_prefix=labeled_prefix,
             )
             eval_kwargs = dict(
                 data_dict=data_dict[test_prefix],
@@ -600,6 +633,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 run_dir,
                 maybe_append_project_suffix(method_str, project_along_mean_diff),
                 prefix,
+                labeled_prefix=labeled_prefix,
             )
             if method in ["TPC", "BSS"]:
                 coef, bias = (
@@ -640,7 +674,13 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
 
         # TODO: standardize losses
         # Mean losses over all eval datasets and all prompts.
-        if method in ["CCS+LR", "CCS-in-LR-span", "CCS+LR-in-span", "CCS-select-LR", "pseudolabel"]:
+        if method in [
+            "CCS+LR",
+            "CCS-in-LR-span",
+            "CCS+LR-in-span",
+            "CCS-select-LR",
+            "pseudolabel",
+        ]:
             loss_names = list(loss_dict[list(loss_dict.keys())[0]][0].keys())
             mean_losses = {}
             for loss_name in loss_names:
@@ -691,6 +731,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 eval_result = {
                     "model": model_short_name,
                     "train_prefix": prefix,
+                    "labeled_train_prefix": labeled_prefix,
                     "test_prefix": test_prefix,
                     "method": maybe_append_project_suffix(
                         method, project_along_mean_diff
@@ -734,4 +775,40 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             # Save the evaluation results to a CSV file.
             eval_results_path = load_utils.get_eval_results_path(run_dir, ds)
             ds_eval_results_df = pd.DataFrame(ds_eval_results)
-            ds_eval_results_df.to_csv(eval_results_path, index=False)
+
+            # If the eval file already exists, check if the headers are the
+            # same. If they are, append to the file without adding new headers.
+            # Otherwise, save to a new eval file and issue a warning.
+            to_csv_kwargs = {"index": False}
+            if os.path.exists(eval_results_path):
+                existing_eval_results_df = pd.read_csv(eval_results_path)
+                if set(ds_eval_results_df.columns) != set(
+                    existing_eval_results_df.columns
+                ):
+                    warnings.warn(
+                        f"Columns in the existing eval results file ({eval_results_path}) "
+                        "do not match the current eval results. Saving to a new file."
+                    )
+                    eval_results_path = load_utils.get_eval_results_path(
+                        run_dir, ds, append_time=True
+                    )
+                else:
+                    to_csv_kwargs = {"mode": "a", "header": False}
+
+            ds_eval_results_df.to_csv(eval_results_path, **to_csv_kwargs)
+
+    expected_config_subset = {
+        "datasets": train_datasets,
+        "labeled_datasets": labeled_train_datasets,
+        "eval_datasets": eval_datasets,
+        "prefix": prefix,
+        "labeled_prefix": labeled_prefix,
+        "test_prefix": test_prefix,
+    }
+    if not _check_config_subset_unmodified(_config, expected_config_subset):
+        config_subset = {key: _config[key] for key in expected_config_subset}
+        raise ValueError(
+            "The following config subset has been modified from the original config: \n"
+            f"Current: {expected_config_subset}\n"
+            f"Original: {config_subset}"
+        )

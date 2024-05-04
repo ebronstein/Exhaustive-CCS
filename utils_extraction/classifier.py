@@ -19,6 +19,7 @@ from utils.types import (
     Mode,
     PermutationDictType,
     PrefixDataDictType,
+    PrefixPermutationDictType,
     PromptIndicesDictType,
 )
 from utils_extraction import load_utils
@@ -842,7 +843,7 @@ def train_orthogonal_probes(
 
 def train_ccs_lr_in_span(
     data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
@@ -876,7 +877,7 @@ def train_ccs_lr_in_span(
     sup_data_kwargs = dict(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -892,7 +893,7 @@ def train_ccs_lr_in_span(
     unsup_data_kwargs = dict(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -963,7 +964,7 @@ def train_ccs_lr_in_span(
 
 def train_ccs_in_lr_span(
     data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
@@ -996,7 +997,7 @@ def train_ccs_in_lr_span(
     sup_data_kwargs = dict(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -1012,7 +1013,7 @@ def train_ccs_in_lr_span(
     unsup_data_kwargs = dict(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -1086,7 +1087,7 @@ def train_ccs_in_lr_span(
 
 def train_ccs_select_lr(
     data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
@@ -1123,7 +1124,7 @@ def train_ccs_select_lr(
     sup_data_kwargs = dict(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -1139,7 +1140,7 @@ def train_ccs_select_lr(
     unsup_data_kwargs = dict(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         project_along_mean_diff=project_along_mean_diff,
     )
@@ -1276,7 +1277,7 @@ def train_ccs_select_lr(
 
 def train_ccs_lr(
     data_dict: PrefixDataDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     projection_model: myReduction,
@@ -1291,7 +1292,7 @@ def train_ccs_lr(
     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         split="train",
         project_along_mean_diff=project_along_mean_diff,
@@ -1299,7 +1300,7 @@ def train_ccs_lr(
     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         split="test",
         project_along_mean_diff=project_along_mean_diff,
@@ -1308,7 +1309,7 @@ def train_ccs_lr(
     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         split="train",
         project_along_mean_diff=project_along_mean_diff,
@@ -1316,7 +1317,7 @@ def train_ccs_lr(
     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         split="test",
         project_along_mean_diff=project_along_mean_diff,
@@ -1348,141 +1349,3 @@ def train_ccs_lr(
     classify_model = fit_result["best_probe"]
 
     return classify_model, fit_result
-
-
-# def train_ccs_in_lr_span(
-#     data_dict: PrefixDataDictType,
-#     permutation_dict: PermutationDictType,
-#     unlabeled_train_data_dict: PromptIndicesDictType,
-#     labeled_train_data_dict: PromptIndicesDictType,
-#     projection_model: myReduction,
-#     labeled_prefix: str,
-#     unlabeled_prefix: str,
-#     num_orthogonal_directions: int,
-#     train_kwargs={},
-#     project_along_mean_diff=False,
-#     device="cuda",
-#     logger=None,
-# ) -> tuple[ContrastPairClassifier, dict]:
-#     # Labeled data.
-#     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
-#         target_dict=labeled_train_data_dict,
-#         data_dict=data_dict[labeled_prefix],
-#         permutation_dict=permutation_dict,
-#         projection_model=projection_model,
-#         split="train",
-#         project_along_mean_diff=project_along_mean_diff,
-#     )
-#     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
-#         target_dict=labeled_train_data_dict,
-#         data_dict=data_dict[labeled_prefix],
-#         permutation_dict=permutation_dict,
-#         projection_model=projection_model,
-#         split="test",
-#         project_along_mean_diff=project_along_mean_diff,
-#     )
-#     # Unlabeled data.
-#     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
-#         target_dict=unlabeled_train_data_dict,
-#         data_dict=data_dict[unlabeled_prefix],
-#         permutation_dict=permutation_dict,
-#         projection_model=projection_model,
-#         split="train",
-#         project_along_mean_diff=project_along_mean_diff,
-#     )
-#     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
-#         target_dict=unlabeled_train_data_dict,
-#         data_dict=data_dict[unlabeled_prefix],
-#         permutation_dict=permutation_dict,
-#         projection_model=projection_model,
-#         split="test",
-#         project_along_mean_diff=project_along_mean_diff,
-#     )
-
-#     train_kwargs_names = [
-#         "n_tries",
-#         "n_epochs",
-#         "lr",
-#         "opt",
-#     ]
-#     train_kwargs = {
-#         k: v for k, v in train_kwargs.items() if k in train_kwargs_names
-#     }
-#     lr_train_kwargs = copy(train_kwargs)
-#     lr_train_kwargs.update({"sup_weight": 1.0, "unsup_weight": 0.0})
-
-#     orthogonal_dirs = None
-#     lr_fit_results = []
-#     for i in range(num_orthogonal_directions):
-#         logger.info(f"Direction {i+1}/{num_orthogonal_directions}.")
-#         fit_result = fit(
-#             train_sup_x0,
-#             train_sup_x1,
-#             train_sup_y,
-#             train_unsup_x0,
-#             train_unsup_x1,
-#             train_unsup_y,
-#             test_sup_x0,
-#             test_sup_x1,
-#             test_sup_y,
-#             test_unsup_x0,
-#             test_unsup_x1,
-#             test_unsup_y,
-#             orthogonal_dirs=orthogonal_dirs,
-#             include_bias=True,
-#             verbose=True,
-#             device=device,
-#             logger=logger,
-#             **lr_train_kwargs,
-#         )
-
-#         # [input_dim, 1]
-#         new_orthogonal_dir = (
-#             fit_result["best_probe"].linear.weight.detach().cpu().numpy()
-#         ).T
-#         new_orthogonal_dir = normalize(new_orthogonal_dir)
-#         if orthogonal_dirs is None:
-#             orthogonal_dirs = new_orthogonal_dir
-#         else:
-#             orthogonal_dirs = np.hstack([orthogonal_dirs, new_orthogonal_dir])
-
-#         # Remove elements that are not JSON-serializable.
-#         del fit_result["best_probe"]
-#         del fit_result["all_probes"]
-#         lr_fit_results.append(fit_result)
-
-#     ccs_train_kwargs = copy(train_kwargs)
-#     ccs_train_kwargs.update({"sup_weight": 0.0, "unsup_weight": 1.0})
-#     final_fit_result = fit(
-#         train_sup_x0,
-#         train_sup_x1,
-#         train_sup_y,
-#         train_unsup_x0,
-#         train_unsup_x1,
-#         train_unsup_y,
-#         test_sup_x0,
-#         test_sup_x1,
-#         test_sup_y,
-#         test_unsup_x0,
-#         test_unsup_x1,
-#         test_unsup_y,
-#         span_dirs=orthogonal_dirs,
-#         include_bias=False,
-#         verbose=True,
-#         device=device,
-#         logger=logger,
-#         **ccs_train_kwargs,
-#     )
-#     final_fit_result["lr_fit_results"] = lr_fit_results
-#     final_fit_result["orthogonal_dirs"] = orthogonal_dirs.tolist()
-
-#     best_probe = final_fit_result["best_probe"]
-#     final_fit_result["best_probe_weight"] = (
-#         best_probe.linear.weight.detach().cpu().numpy().tolist()
-#     )
-#     if best_probe.linear.bias is not None:
-#         final_fit_result["best_probe_bias"] = (
-#             best_probe.linear.bias.detach().cpu().numpy().tolist()
-#         )
-
-#     return best_probe, final_fit_result

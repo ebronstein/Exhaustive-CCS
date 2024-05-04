@@ -4,7 +4,12 @@ from typing import Literal, Optional
 import numpy as np
 import torch
 
-from utils.types import PermutationDictType, PrefixDataDictType, PromptIndicesDictType
+from utils.types import (
+    PermutationDictType,
+    PrefixDataDictType,
+    PrefixPermutationDictType,
+    PromptIndicesDictType,
+)
 from utils_extraction import projection
 from utils_extraction.classifier import (
     FIT_CCS_LR_KWARGS_NAMES,
@@ -79,7 +84,7 @@ def train_pseudo_label(
     data_dict: PrefixDataDictType,
     labeled_train_data_dict: PromptIndicesDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
-    permutation_dict: PermutationDictType,
+    permutation_dict: PrefixPermutationDictType,
     labeled_prefix: str,
     unlabeled_prefix: str,
     pseudo_label_config: dict,
@@ -95,7 +100,7 @@ def train_pseudo_label(
     (train_sup_x0, train_sup_x1), train_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         split="train",
         project_along_mean_diff=project_along_mean_diff,
@@ -103,7 +108,7 @@ def train_pseudo_label(
     (test_sup_x0, test_sup_x1), test_sup_y = make_contrast_pair_data(
         target_dict=labeled_train_data_dict,
         data_dict=data_dict[labeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[labeled_prefix],
         projection_model=projection_model,
         split="test",
         project_along_mean_diff=project_along_mean_diff,
@@ -112,7 +117,7 @@ def train_pseudo_label(
     (train_unsup_x0, train_unsup_x1), train_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         split="train",
         project_along_mean_diff=project_along_mean_diff,
@@ -120,7 +125,7 @@ def train_pseudo_label(
     (test_unsup_x0, test_unsup_x1), test_unsup_y = make_contrast_pair_data(
         target_dict=unlabeled_train_data_dict,
         data_dict=data_dict[unlabeled_prefix],
-        permutation_dict=permutation_dict,
+        permutation_dict=permutation_dict[unlabeled_prefix],
         projection_model=projection_model,
         split="test",
         project_along_mean_diff=project_along_mean_diff,
