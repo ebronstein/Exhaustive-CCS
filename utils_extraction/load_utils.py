@@ -179,22 +179,21 @@ def get_permutation_dict_path(run_dir: str, dataset: str, prefix: str) -> str:
 
 def save_permutation_dict(permutation_dict: PrefixPermutationDictType, run_dir: str):
     for prefix, ds_to_perm in permutation_dict.items():
-        formatted_ds_to_perm = {}
         for ds, perm in ds_to_perm.items():
             if len(perm) != 2:
                 raise ValueError(
                     f"Expected permutation_dict[{prefix}][{ds}] to have length 2, got {len(perm)}"
                 )
+            # Convert numpy arrays to lists.
             perm = (perm[0].tolist(), perm[1].tolist())
-            formatted_ds_to_perm[ds] = perm
 
-        permutation_dict_path = get_permutation_dict_path(run_dir, ds, prefix)
-        permutation_dict_dir = os.path.dirname(permutation_dict_path)
-        if not os.path.exists(permutation_dict_dir):
-            os.makedirs(permutation_dict_dir)
+            permutation_dict_path = get_permutation_dict_path(run_dir, ds, prefix)
+            permutation_dict_dir = os.path.dirname(permutation_dict_path)
+            if not os.path.exists(permutation_dict_dir):
+                os.makedirs(permutation_dict_dir)
 
-        with open(permutation_dict_path, "wb") as f:
-            pickle.dump(formatted_ds_to_perm, f)
+            with open(permutation_dict_path, "wb") as f:
+                pickle.dump(perm, f)
 
 
 def maybe_append_project_suffix(method, project_along_mean_diff):
