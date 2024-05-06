@@ -181,6 +181,8 @@ def sacred_config():
         n_rounds=1,
         select_fn="high_confidence_consistency",
         prob_threshold=0.8,
+        # Threshold for the consistency error.
+        consistency_err_threshold=0.1,
         label_fn="argmax",
     )
 

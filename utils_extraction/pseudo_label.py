@@ -17,17 +17,99 @@ from utils_extraction.classifier import (
     make_contrast_pair_data,
 )
 
-SelectFnType = Literal["all", "high_confidence_consistency"]
 LabelFnType = Literal["argmax"]
+
+
+def make_all_mask(config, train_p0: np.ndarray, train_p1: np.ndarray) -> np.ndarray:
+    return np.ones_like(train_p0, dtype=bool)
+
+
+def make_confidence_mask(
+    config, train_p0: np.ndarray, train_p1: np.ndarray
+) -> np.ndarray:
+    prob_threshold = config["prob_threshold"]
+    x0_prob_high_mask = train_p0 >= prob_threshold
+    x1_prob_high_mask = train_p1 >= prob_threshold
+    return np.logical_or(x0_prob_high_mask, x1_prob_high_mask)
+
+
+def make_consistency_mask(
+    config, train_p0: np.ndarray, train_p1: np.ndarray
+) -> np.ndarray:
+    threshold = config["consistency_err_threshold"]
+    return np.abs(train_p0 - train_p1) < threshold
+
+
+def make_confidence_consistency_mask(
+    config, train_p0: np.ndarray, train_p1: np.ndarray
+) -> np.ndarray:
+    confidence_mask = make_confidence_mask(config, train_p0, train_p1)
+    consistency_mask = make_consistency_mask(config, train_p0, train_p1)
+    return np.logical_and(confidence_mask, consistency_mask)
+
+
+def make_high_confidence_consistency_mask(
+    config, train_p0: np.ndarray, train_p1: np.ndarray
+) -> np.ndarray:
+    prob_threshold = config["prob_threshold"]
+    x0_prob_high_mask = train_p0 >= prob_threshold
+    x1_prob_high_mask = train_p1 >= prob_threshold
+    return np.logical_xor(x0_prob_high_mask, x1_prob_high_mask)
+
+
+SELECT_PSEUDOLABEL_NAME_TO_FN = {
+    "all": make_all_mask,
+    "confidence": make_confidence_mask,
+    "consistency": make_consistency_mask,
+    "confidence_consistency": make_confidence_consistency_mask,
+    "high_confidence_consistency": make_high_confidence_consistency_mask,
+}
+
+
+def make_pseudolabel_mask(
+    config, train_p0: np.ndarray, train_p1: np.ndarray
+) -> np.ndarray:
+    select_fn = SELECT_PSEUDOLABEL_NAME_TO_FN.get(config["select_fn"])
+    if select_fn is None:
+        raise ValueError(f"Invalid select_fn: {select_fn}")
+
+    return select_fn(config, train_p0, train_p1)
+
+
+def make_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    label_fn = config["label_fn"]
+    if label_fn == "argmax":
+        return argmax_pseudolabels(config, train_p0, train_p1)
+    else:
+        raise ValueError(f"Invalid label_fn: {label_fn}")
+
+
+def argmax_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    return np.argmax(np.stack([train_p0, train_p1], axis=1), axis=1)
+
+
+def p1_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    return train_p1
+
+
+def mean_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    return (train_p1 + (1 - train_p0)) / 2
+
+
+LABEL_NAME_TO_FN = {
+    "argmax": argmax_pseudolabels,
+    "p1": p1_pseudolabels,
+    "mean": mean_pseudolabels,
+}
 
 
 def validate_pseudo_label_config(config: dict):
     select_fn = config["select_fn"]
-    if select_fn not in typing.get_args(SelectFnType):
+    if select_fn not in SELECT_PSEUDOLABEL_NAME_TO_FN:
         raise ValueError(f"Invalid select_fn: {select_fn}")
 
     label_fn = config["label_fn"]
-    if label_fn not in typing.get_args(LabelFnType):
+    if label_fn not in LABEL_NAME_TO_FN:
         raise ValueError(f"Invalid label_fn: {label_fn}")
 
     n_rounds = config["n_rounds"]
@@ -42,42 +124,15 @@ def validate_pseudo_label_config(config: dict):
     ):
         raise ValueError(f"Invalid prob_threshold: {prob_threshold}")
 
-
-def make_pseudolabel_mask(
-    config, train_p0: np.ndarray, train_p1: np.ndarray
-) -> np.ndarray:
-    select_fn = config["select_fn"]
-    if select_fn == "all":
-        return make_all_mask(config, train_p0, train_p1)
-    elif select_fn == "high_confidence_consistency":
-        return make_high_confidence_consistency_mask(config, train_p0, train_p1)
-    else:
-        raise ValueError(f"Invalid select_fn: {select_fn}")
-
-
-def make_all_mask(config, train_p0: np.ndarray, train_p1: np.ndarray) -> np.ndarray:
-    return np.ones_like(train_p0, dtype=bool)
-
-
-def make_high_confidence_consistency_mask(
-    config, train_p0: np.ndarray, train_p1: np.ndarray
-) -> np.ndarray:
-    prob_threshold = config["prob_threshold"]
-    x0_prob_high_mask = train_p0 >= prob_threshold
-    x1_prob_high_mask = train_p1 >= prob_threshold
-    return np.logical_xor(x0_prob_high_mask, x1_prob_high_mask)
-
-
-def make_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
-    label_fn = config["label_fn"]
-    if label_fn == "argmax":
-        return argmax_pseudolabels(config, train_p0, train_p1)
-    else:
-        raise ValueError(f"Invalid label_fn: {label_fn}")
-
-
-def argmax_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
-    return np.argmax(np.stack([train_p0, train_p1], axis=1), axis=1)
+    consistency_err_threshold = config["consistency_err_threshold"]
+    if (
+        not isinstance(consistency_err_threshold, (float, int))
+        or consistency_err_threshold < 0
+        or consistency_err_threshold > 1
+    ):
+        raise ValueError(
+            f"Invalid consistency_err_threshold: {consistency_err_threshold}"
+        )
 
 
 def train_pseudo_label(
