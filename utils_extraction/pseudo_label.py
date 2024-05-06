@@ -17,8 +17,6 @@ from utils_extraction.classifier import (
     make_contrast_pair_data,
 )
 
-LabelFnType = Literal["argmax"]
-
 
 def make_all_mask(config, train_p0: np.ndarray, train_p1: np.ndarray) -> np.ndarray:
     return np.ones_like(train_p0, dtype=bool)
@@ -37,7 +35,7 @@ def make_consistency_mask(
     config, train_p0: np.ndarray, train_p1: np.ndarray
 ) -> np.ndarray:
     threshold = config["consistency_err_threshold"]
-    return np.abs(train_p0 - train_p1) < threshold
+    return np.abs(train_p0 + train_p1 - 1) < threshold
 
 
 def make_confidence_consistency_mask(
@@ -71,17 +69,9 @@ def make_pseudolabel_mask(
 ) -> np.ndarray:
     select_fn = SELECT_PSEUDOLABEL_NAME_TO_FN.get(config["select_fn"])
     if select_fn is None:
-        raise ValueError(f"Invalid select_fn: {select_fn}")
+        raise ValueError(f"Invalid select_fn: {config['select_fn']}")
 
     return select_fn(config, train_p0, train_p1)
-
-
-def make_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
-    label_fn = config["label_fn"]
-    if label_fn == "argmax":
-        return argmax_pseudolabels(config, train_p0, train_p1)
-    else:
-        raise ValueError(f"Invalid label_fn: {label_fn}")
 
 
 def argmax_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
@@ -101,6 +91,13 @@ LABEL_NAME_TO_FN = {
     "p1": p1_pseudolabels,
     "mean": mean_pseudolabels,
 }
+
+
+def make_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    label_fn = LABEL_NAME_TO_FN.get(config["label_fn"])
+    if label_fn is None:
+        raise ValueError(f"Invalid label_fn: {config['label_fn']}")
+    return label_fn(config, train_p0, train_p1)
 
 
 def validate_pseudo_label_config(config: dict):
