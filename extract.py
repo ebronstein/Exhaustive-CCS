@@ -184,6 +184,9 @@ def sacred_config():
         # Threshold for the consistency error.
         consistency_err_threshold=0.1,
         label_fn="argmax",
+        # Temperature for the softmax function when creating pseudolabels
+        # for label_fn="softmax".
+        softmax_temp=0.3,
     )
 
     # Saving

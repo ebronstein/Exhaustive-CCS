@@ -86,10 +86,18 @@ def mean_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
     return (train_p1 + (1 - train_p0)) / 2
 
 
+def softmax_pseudolabels(config, train_p0: np.ndarray, train_p1: np.ndarray):
+    temp = config["softmax_temp"]
+    train_p0 = train_p0 / temp
+    train_p1 = train_p1 / temp
+    return np.exp(train_p1) / (np.exp(train_p0) + np.exp(train_p1))
+
+
 LABEL_NAME_TO_FN = {
     "argmax": argmax_pseudolabels,
     "p1": p1_pseudolabels,
     "mean": mean_pseudolabels,
+    "softmax": softmax_pseudolabels,
 }
 
 
