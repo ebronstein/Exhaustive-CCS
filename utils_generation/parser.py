@@ -41,8 +41,17 @@ def getArgs():
                         help="Whether to use the old version of datasets if there exists one. Using `reload_data` will let the program reselect data points from the datasets.")
     parser.add_argument("--swipe", action="store_true",
                         help="Whether to swipe all prompts. If this is true, then `prompt_idx` will be ignored, and for each dataset in `datasets`, all prompts will be executed.")
-    parser.add_argument("--prompt_idx", nargs="+", default=[
-                        0], help="The indexs of prompt you want to use.")
+    parser.add_argument("--prompt_idx", type=int, nargs="+",
+                        help="The indexs of prompt you want to use.")
+    parser.add_argument(
+        "--prompt_name",
+        type=str,
+        nargs="+",
+        help=(
+            "Prompt names to use in addition to prompt_idx. Mutually exclusive "
+            "with --swipe."
+        ),
+    )
 
     # generation & zero-shot accuracy calculation
     parser.add_argument("--cal_zeroshot", type=int, default=1,
@@ -85,6 +94,12 @@ def getArgs():
             "Invalid prefix name {}. Please check your prefix name. To add new prefix, please mofidy `utils_generation/prompts.json` and register new prefix in {}.json.".format(
                 prefix, json_dir
             ))
+
+    if args.prompt_idx is None and args.prompt_name is None:
+        raise ValueError(
+            "Either --prompt_idx or --prompt_name must be provided.")
+    if args.swipe and args.prompt_name is not None:
+        raise ValueError("Cannot use --swipe and --prompt_name together.")
 
     # Set default states_location according to model type
     args.states_location = get_states_location_str(args.states_location, args.model, use_auth_token=HF_AUTH_TOKEN)

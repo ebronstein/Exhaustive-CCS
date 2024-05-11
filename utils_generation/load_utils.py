@@ -14,7 +14,12 @@ from transformers import (
 )
 
 from datasets import load_dataset
-from utils_generation.construct_prompts import MyPrompts, constructPrompt
+from utils_generation.construct_prompts import (
+    MyPrompts,
+    constructPrompt,
+    getLoadName,
+    prompt_name_to_index,
+)
 from utils_generation.hf_utils import prevent_name_conflicts
 from utils_generation.save_utils import get_hidden_states_dir
 
@@ -100,15 +105,6 @@ def get_balanced_num(total_num, lis_len):
     more = total_num - tmp * lis_len
     return [tmp if i < lis_len - more else tmp + 1 for i in range(lis_len)]
 
-def getLoadName(set_name):
-    if set_name in ["imdb", "amazon-polarity", "ag-news", "dbpedia-14", "piqa"]:
-        return [set_name.replace("-", "_")]
-    elif set_name in ["copa", "rte", "boolq"]:
-        return ["super_glue", set_name.replace("-", "_")]
-    elif set_name in ["qnli"]:
-        return ["glue", set_name.replace("-", "_")]
-    elif set_name == "story-cloze":
-        return ["story_cloze", "2016"]
 
 def loadFromDatasets(set_name, cache_dir, max_num):
     '''
@@ -142,25 +138,49 @@ def loadDatasets(args, tokenizer):
     '''
     print("-------- datasets --------")
     base_dir = args.data_base_dir
-    set_list = args.datasets
+    datasets = args.datasets
     num_data = [int(w) for w in args.num_data]
     confusion = args.prefix
     reload = args.reload_data
-    prompt_idx_list = [int(w) for w in args.prompt_idx]
+    prompt_idx_list = args.prompt_idx
+    prompt_names = args.prompt_name
 
     # deal with the length of prompt_idx_list, and extend
     # end up making prompt_idx_list and set_list with the same length
     if not args.swipe:
-        print("Consider datasets {} and prompt idx {}.".format(set_list, prompt_idx_list))
-        set_num = len(set_list)
-        set_list = [w for w in set_list for _ in range(len(prompt_idx_list))]
-        prompt_idx_list = [j for _ in range(set_num) for j in prompt_idx_list]
+        print("Datasets: {}, prompt idxs: {}, prompt names: {}.".format(
+            datasets, prompt_idx_list, prompt_names))
+        if prompt_idx_list is None:
+            set_list = []
+            prompt_idx_list = []
+        else:
+            set_num = len(datasets)
+            # Repeat each dataset for each prompt index.
+            set_list = [set_name for set_name in datasets for _ in range(len(prompt_idx_list))]
+            # Repeat each prompt index for each dataset.
+            prompt_idx_list = [prompt_idx for _ in range(set_num) for prompt_idx in prompt_idx_list]
+
+        if prompt_names is not None:
+            for set_name in datasets:
+                for prompt_name in prompt_names:
+                    prompt_idx = prompt_name_to_index(prompt_name, set_name)
+                    # Skip the prompt if it does not exist or it is already in
+                    # the list.
+                    if prompt_idx is None or prompt_idx in prompt_idx_list:
+                        print(f"Skipping prompt {prompt_name} for dataset {set_name}.")
+                        continue
+
+                    prompt_idx_list.append(prompt_idx)
+                    set_list.append(set_name)
     else:
         # swipe: for each dataset, will use all the prompts
-        prompt_idx_list = MyPrompts.getGlobalPromptsNum(set_list)
-        print("Consider datasets {} with {} prompts each.".format(set_list, prompt_idx_list))
-        set_list = [[w for _ in range(times)] for w, times in zip(set_list, prompt_idx_list)]
-        prompt_idx_list = [[w for w in range(times)] for times in prompt_idx_list]
+        # Number of prompts for each dataset.
+        prompt_idx_list = MyPrompts.getGlobalPromptsNum(datasets)
+        print("Consider datasets {} with {} prompts each.".format(datasets, prompt_idx_list))
+        # Repeat each dataset for each prompt.
+        set_list = [[set for _ in range(n_prompts)] for set, n_prompts in zip(datasets, prompt_idx_list)]
+        # Repeat each prompt index for each dataset.
+        prompt_idx_list = [[w for w in range(n_prompts)] for n_prompts in prompt_idx_list]
         set_list, prompt_idx_list = [w for j in set_list for w in j], [w for j in prompt_idx_list for w in j]
 
     # deal with the length of `num_data`

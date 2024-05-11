@@ -1,11 +1,15 @@
 import random
+from collections import OrderedDict
 from copy import deepcopy
 from functools import partial
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
 from promptsource.templates import DatasetTemplates
+
+from utils_generation import alice_explicit_opinion_prompt_template
+from utils_generation.prompt_template import PromptTemplate
 
 filter_length = 500
 
@@ -38,18 +42,25 @@ label_dict = {
     "story-cloze": ["choice 1", "choice 2"],
 }
 
-
+# prompt_dict[set_name] is a list or OrderedDict of prompts for the dataset
+# `set_name`. The keys are either the list indices if a list or arbitrary keys
+# if an OrderedDict. The elements/values are either a [template, tokens] list or
+# a PromptTemplate instance.
 prompt_dict = {
-    "imdb": [
-        [
-            "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
-            ["text", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nBetween {} and {}, which is the sentiment of this example?",
-            ["text", "0", "1"],
-        ],
-    ],
+    "imdb": OrderedDict(
+        {
+            0: [
+                "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
+                ["text", "0", "1"],
+            ],
+            1: [
+                "Consider the following example: ''' {} '''\nBetween {} and {}, which is the sentiment of this example?",
+                ["text", "0", "1"],
+            ],
+            "alice_explicit_opinion_1": alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion1,
+            "alice_explicit_opinion_2": alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion2,
+        }
+    ),
     "amazon-polarity": [
         [
             "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
@@ -353,6 +364,8 @@ confusion_prefix_for_partition_index = {"bananashed": ["Banana", "Shed"]}
 # and the value is a list of suffixes, where the partition index is used to
 # index into this list. For example, if the confusion setting is "bananashed",
 # the suffix is "Banana" for partition index 0 and "Shed" for partition index 1.
+# If the confusion suffix does not support partition index, the value is a list
+# with a single string.
 confusion_suffix_for_partition_index = {
     "dot": ["."],
     "thatsright": ["That's right!"],
@@ -364,6 +377,44 @@ confusion_suffix_for_partition_index = {
 # Prompts for which "A:" should NOT be appended after the question and before the
 # answer.
 CONFUSION_PREFIX_NOT_APPEND_A = {"normal", "bananashed"}
+
+
+def getLoadName(set_name):
+    if set_name in ["imdb", "amazon-polarity", "ag-news", "dbpedia-14", "piqa"]:
+        return [set_name.replace("-", "_")]
+    elif set_name in ["copa", "rte", "boolq"]:
+        return ["super_glue", set_name.replace("-", "_")]
+    elif set_name in ["qnli"]:
+        return ["glue", set_name.replace("-", "_")]
+    elif set_name == "story-cloze":
+        return ["story_cloze", "2016"]
+
+
+def prompt_name_to_index(prompt_name: str, set_name: str) -> Optional[int]:
+    """Convert the prompt name to an index.
+
+    Args:
+        prompt_name: The name of the prompt.
+        set_name: The name of the dataset.
+
+    Returns:
+        The index of the prompt if it exists, otherwise None.
+    """
+    promptsource_set_name = getLoadName(set_name)
+    if promptsource_set_name is not None:
+        module = DatasetTemplates(*promptsource_set_name)
+        if prompt_name in module.all_template_names:
+            return module.all_template_names.index(prompt_name)
+    else:
+        module = None
+
+    if set_name in prompt_dict.keys():
+        prompts = prompt_dict[set_name]
+        if isinstance(prompts, dict) and prompt_name in prompts.keys():
+            index = list(prompts.keys()).index(prompt_name)
+            return index if module is None else index + len(module.all_template_names)
+
+    return None
 
 
 class MyPrompts:
@@ -379,13 +430,10 @@ class MyPrompts:
             self.module = None
         else:
             self.nomodule = False
-            from utils_generation.load_utils import getLoadName
-
             self.module = DatasetTemplates(*getLoadName(set_name))
 
-    def getGlobalPromptsNum(set_name_list):
-        from utils_generation.load_utils import getLoadName
-
+    @classmethod
+    def getGlobalPromptsNum(cls, set_name_list):
         res = []
         for set_name in set_name_list:
             num = 0
@@ -414,19 +462,26 @@ class MyPrompts:
         example: Union[dict[str, Union[str, int]], pd.Series],
         prompt_idx: int,
         choices: list[int],
+        partition_index: int,
         qaexamples: tuple[pd.DataFrame, list[int]],
     ) -> tuple[str, list[str]]:
         """
 
         Args:
-            choices: Possible answer choices (i.e., labels). For example,
-                [0, 1].
+            example: A dictionary or a pandas Series containing the example
+                text.
+            prompt_idx: Index of the prompt to use.
+            choices: Indices of the possible answer choices (i.e., labels).
+                For example, [0, 1].
+            partition_index: Partition index.
+            qaexamples: A tuple containing a DataFrame of question-answer
+                examples. This could be used for in-context learning, for
+                example.
 
         Returns:
             Tuple (question, answer_list) with the question and answer list.
         """
-
-        tmp = deepcopy(example)
+        example = deepcopy(example)
         lbl_tag = "label" if self.set_name != "story_cloze" else "answer_right_ending"
 
         # Check if the prompt index corresponds to a prompt from `promptsource`
@@ -435,40 +490,48 @@ class MyPrompts:
         if prompt_idx < self.getPromptsNum() - len(self.prompt_dict):
             idx = prompt_idx
             func = self.module[self.module.all_template_names[idx]]
-            tmp[lbl_tag] = choices[0] + int(self.set_name == "story_cloze")
-            res0 = func.apply(tmp)
-            tmp[lbl_tag] = choices[1] + int(self.set_name == "story_cloze")
-            res1 = func.apply(tmp)
+            example[lbl_tag] = choices[0] + int(self.set_name == "story_cloze")
+            res0 = func.apply(example)
+            example[lbl_tag] = choices[1] + int(self.set_name == "story_cloze")
+            res1 = func.apply(example)
 
             # return the question and the list of labels
             return res0[0], [res0[1], res1[1]]
-
         else:  # Use personal prompt
-            idx = prompt_idx - (self.getPromptsNum() - len(self.prompt_dict))
-            template, token = self.prompt_dict[idx][0], self.prompt_dict[idx][1]
-            formatter = []
-            for w in token:
-                if "e.g." in w:  # format is "e.g.0_sth"
-                    idx, typ = int(w.split("_")[0][-1]), w.split("_")[1]
-                    if typ == "correct":
-                        formatter.append(self.label_dict[qaexamples[1][idx]])
-                    elif typ == "incorrect":
-                        formatter.append(self.label_dict[1 - qaexamples[1][idx]])
-                    else:  # "e.g.0_text", take qaexamples[0].loc[idx]
-                        formatter.append(qaexamples[0].loc[idx][typ])
-                else:
-                    formatter.append(
-                        self.label_dict[choices[int(w)]] if w in ["0", "1"] else tmp[w]
-                    )
-            # token = [w if w not in ["0", "1"]
-            #          else choices[int(w)] for w in token]
-            # formatter = [tmp[w] if type(
-            #     w) != int else self.label_dict[w] for w in token]
-            question = template.format(*formatter)
+            # For binary choice datasets, use `self.label_dict` to get the label.
+            # For multiple choice, use "choice 1" and "choice 2".
             if self.set_name not in ["ag_news", "dbpedia_14"]:
-                return question, [self.label_dict[w] for w in choices]
+                choice_labels = [self.label_dict[w] for w in choices]
             else:
-                return question, ["choice 1", "choice 2"]
+                choice_labels = ["choice 1", "choice 2"]
+
+            idx = prompt_idx - (self.getPromptsNum() - len(self.prompt_dict))
+            prompt_template = list(self.prompt_dict.values())[idx]
+            if isinstance(prompt_template, PromptTemplate):
+                question = prompt_template.apply(
+                    example, choice_labels, partition_index, qaexamples
+                )
+            else:
+                template, token = prompt_template[0], prompt_template[1]
+                formatter = []
+                for w in token:
+                    if "e.g." in w:  # format is "e.g.0_sth"
+                        idx, typ = int(w.split("_")[0][-1]), w.split("_")[1]
+                        if typ == "correct":
+                            formatter.append(self.label_dict[qaexamples[1][idx]])
+                        elif typ == "incorrect":
+                            formatter.append(self.label_dict[1 - qaexamples[1][idx]])
+                        else:  # "e.g.0_text", take qaexamples[0].loc[idx]
+                            formatter.append(qaexamples[0].loc[idx][typ])
+                    else:
+                        formatter.append(
+                            self.label_dict[choices[int(w)]]
+                            if w in ["0", "1"]
+                            else example[w]
+                        )
+                question = template.format(*formatter)
+
+            return question, choice_labels
 
 
 def get_label_and_choices(label: int, num_choices: int) -> tuple[int, list[int]]:
@@ -480,8 +543,8 @@ def get_label_and_choices(label: int, num_choices: int) -> tuple[int, list[int]]
 
     Returns:
         tuple[int, list[int]]: A tuple containing the label (0 or 1) and the
-        choices for the question. The label is the index of the correct answer
-        in the choices list.
+        choices (indices) for the question. The label is the index of the
+        correct answer in the choices list.
 
     Notes:
         - When there are more than two choices, randomly select an incorrect
@@ -530,8 +593,8 @@ def maybe_add_prefix_to_question(
         elif not is_punctuation(question[-1]):
             question = question + "?"
 
-    # TODO: handle this case more generally.
-    if confusion_prefix_name == "bananashed":
+    if confusion_prefix_name in confusion_prefix_for_partition_index:
+        # Use the partition index to select the confusion prefix.
         confusion_prefix_str = confusion_prefix_for_partition_index[
             confusion_prefix_name
         ][partition_index]
@@ -575,9 +638,15 @@ def concatAnswer(
     ans = ans.rstrip(" ")
 
     if confusion_suffix_name is not None:
-        confusion_suffix_str = confusion_suffix_for_partition_index[
+        confusion_suffix_list = confusion_suffix_for_partition_index[
             confusion_suffix_name
-        ][partition_index]
+        ]
+        # If there is only one confusion suffix, use it because multiple
+        # partitions are not supported by this confusion setting.
+        if len(confusion_suffix_list) == 1:
+            confusion_suffix_str = confusion_suffix_list[0]
+        else:
+            confusion_suffix_str = confusion_suffix_list[partition_index]
         confusion_suffix_str = confusion_suffix_str.lstrip(" ")
 
         # If answer ends with punctuation and suffix starts with punctuation,
@@ -622,20 +691,12 @@ def format_question_answer(question, ans, mdl_name) -> str:
         return question + " " + ans
 
 
-def prompt_partition_indices(num_examples: int, confusion: str):
-    """Return indices that partition the dataset based on `confusion`."""
-    confusion_prefix_name, confusion_suffix_name = get_confusion_prefix_and_suffix(
-        confusion
-    )
-    if confusion_prefix_name == "bananashed" or confusion_suffix_name == "bananashed":
-        # Generate indices that randomly partition the dataset in half.
-        indices = [0] * (num_examples // 2) + [1] * (num_examples // 2)
-        if num_examples % 2 == 1:
-            indices.append(0)
-        random.shuffle(indices)
-    else:
-        indices = [0] * num_examples
-
+def make_partition_indices(num_examples: int, confusion: str):
+    """Return indices that randomly partition the dataset in half."""
+    indices = [0] * (num_examples // 2) + [1] * (num_examples // 2)
+    if num_examples % 2 == 1:
+        indices.append(0)
+    random.shuffle(indices)
     return indices
 
 
@@ -659,7 +720,6 @@ def constructPrompt(
     Returns:
         A dataframe, with `null`, `0`, `1`, `label`, `selection`, which should be save with hidden states together
     """
-
     prompter = MyPrompts(set_name)
 
     result = {
@@ -692,7 +752,7 @@ def constructPrompt(
         eg_a.append(choices[label])  #  append the correct answer
     qa_examples = (eg_q, eg_a)
 
-    partition_indices = prompt_partition_indices(len(frame), confusion)
+    partition_indices = make_partition_indices(len(frame), confusion)
 
     for idx in range(len(frame)):
 
@@ -705,7 +765,7 @@ def constructPrompt(
         # Get the question and Answer List
         # question, ans_lis = formatExample(set_name, frame.loc[idx], prompt_idx, choices)
         question, ans_lis = prompter.apply(
-            frame.loc[idx], prompt_idx, choices, qa_examples
+            frame.loc[idx], prompt_idx, choices, partition_indices[idx], qa_examples
         )
 
         concat_data_list = [
