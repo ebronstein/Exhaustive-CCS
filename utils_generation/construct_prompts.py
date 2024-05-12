@@ -42,6 +42,10 @@ label_dict = {
     "story-cloze": ["choice 1", "choice 2"],
 }
 
+# Datasets for which promptsource prompts are not used. Only custom prompts from
+# prompt_dict are used.
+EXCLUDE_PROMPTSOURCE_DATASETS = ("ag-news", "dbpedia-14")
+
 # prompt_dict[set_name] is an OrderedDict of prompts for the dataset
 # `set_name`. The keys are a list or arbitrary keys, and the elements/values are
 # either a [template, tokens, is_default] list or a [PromptTemplate instance,
@@ -49,6 +53,7 @@ label_dict = {
 prompt_dict = {
     "imdb": OrderedDict(
         {
+            # Default prompts added in Burns et. al.
             0: [
                 "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
                 ["text", "0", "1"],
@@ -59,6 +64,7 @@ prompt_dict = {
                 ["text", "0", "1"],
                 True,
             ],
+            # Alice explicit opinion.
             "alice_explicit_opinion_1": [
                 alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion1,
                 False,
@@ -71,6 +77,7 @@ prompt_dict = {
     ),
     "amazon-polarity": OrderedDict(
         {
+            # Default prompts added in Burns et. al.
             0: [
                 "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
                 ["content", "0", "1"],
@@ -81,10 +88,20 @@ prompt_dict = {
                 ["content", "0", "1"],
                 True,
             ],
+            # Alice explicit opinion.
+            "alice_explicit_opinion_1": [
+                alice_explicit_opinion_prompt_template.AmazonPolarityAliceExplicitOpinion1,
+                False,
+            ],
+            "alice_explicit_opinion_2": [
+                alice_explicit_opinion_prompt_template.AmazonPolarityAliceExplicitOpinion2,
+                False,
+            ],
         }
     ),
     "ag-news": OrderedDict(
         {
+            # Default prompts added in Burns et. al.
             0: [
                 "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
                 ["text", "0", "1"],
@@ -124,6 +141,39 @@ prompt_dict = {
                 "{}\nWhich section of a newspaper would this article likely appear in, choice 1: {}, or choice 2: {}?",
                 ["text", "0", "1"],
                 True,
+            ],
+            # Alice explicit opinion.
+            "alice_explicit_opinion_1": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion1,
+                False,
+            ],
+            "alice_explicit_opinion_2": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion2,
+                False,
+            ],
+            "alice_explicit_opinion_3": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion3,
+                False,
+            ],
+            "alice_explicit_opinion_4": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion4,
+                False,
+            ],
+            "alice_explicit_opinion_5": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion5,
+                False,
+            ],
+            "alice_explicit_opinion_6": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion6,
+                False,
+            ],
+            "alice_explicit_opinion_7": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion7,
+                False,
+            ],
+            "alice_explicit_opinion_8": [
+                alice_explicit_opinion_prompt_template.AGNewsAliceExplicitOpinion8,
+                False,
             ],
         }
     ),
@@ -441,14 +491,20 @@ def prompt_name_to_index(prompt_name: str, set_name: str) -> Optional[int]:
     Returns:
         The index of the prompt if it exists, otherwise None.
     """
-    promptsource_set_name = getLoadName(set_name)
-    if promptsource_set_name is not None:
-        module = DatasetTemplates(*promptsource_set_name)
-        if prompt_name in module.all_template_names:
-            return module.all_template_names.index(prompt_name)
-    else:
+    if set_name in EXCLUDE_PROMPTSOURCE_DATASETS:
+        # Do not use promptsource prompts for these datasets.
         module = None
+    else:
+        # Check for a promptsource prompt.
+        promptsource_set_name = getLoadName(set_name)
+        if promptsource_set_name is not None:
+            module = DatasetTemplates(*promptsource_set_name)
+            if prompt_name in module.all_template_names:
+                return module.all_template_names.index(prompt_name)
+        else:
+            module = None
 
+    # Check if it is a custom prompt.
     if set_name in prompt_dict.keys():
         prompts = prompt_dict[set_name]
         if isinstance(prompts, dict) and prompt_name in prompts.keys():
@@ -456,6 +512,19 @@ def prompt_name_to_index(prompt_name: str, set_name: str) -> Optional[int]:
             return index if module is None else index + len(module.all_template_names)
 
     return None
+
+
+# Mapping from dataset to prompt name for the Alice explicit opinion subset.
+ALICE_EXPLICIT_OPINION_PROMPT_NAMES = {
+    "imdb": [f"alice_explicit_opinion_{i}" for i in range(1, 3)],
+    "amazon-polarity": [f"alice_explicit_opinion_{i}" for i in range(1, 3)],
+    "ag-news": [f"alice_explicit_opinion_{i}" for i in range(1, 9)],
+}
+# Mapping from dataset to prompt index for the Alice explicit opinion subset.
+ALICE_EXPLICIT_OPINION_PROMPT_IDXS = {
+    ds: [prompt_name_to_index(prompt, ds) for prompt in prompts]
+    for ds, prompts in ALICE_EXPLICIT_OPINION_PROMPT_NAMES.items()
+}
 
 
 class MyPrompts:
@@ -466,7 +535,8 @@ class MyPrompts:
         )
         self.label_dict = label_dict[set_name]
 
-        if set_name in ["ag-news", "dbpedia-14"]:
+        # Only use custom prompts for these datasets.
+        if set_name in EXCLUDE_PROMPTSOURCE_DATASETS:
             self.nomodule = True
             self.module = None
         else:
@@ -485,7 +555,7 @@ class MyPrompts:
                             num += 1
                 else:
                     num += len(prompt_dict[set_name])
-            if set_name not in ["ag-news", "dbpedia-14"]:
+            if set_name not in EXCLUDE_PROMPTSOURCE_DATASETS:
                 num += len(DatasetTemplates(*getLoadName(set_name)).all_template_names)
             if set_name == "copa":
                 num -= 4  # do not use the last four prompts

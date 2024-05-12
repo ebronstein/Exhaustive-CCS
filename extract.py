@@ -31,7 +31,7 @@ from utils_extraction.method_utils import eval, mainResults
 from utils_extraction.pseudo_label import validate_pseudo_label_config
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
-from utils_generation.construct_prompts import MyPrompts
+from utils_generation.construct_prompts import MyPrompts, prompt_name_to_index
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 
 ALL_DATASETS = [
@@ -132,20 +132,24 @@ def sacred_config():
     labeled_prefix: Optional[PrefixType] = None
     # Prefix to use for evaluation. If None, the training prefix will be used.
     test_prefix: Optional[PrefixType] = None
-    # Prompt indices for the main training data. prompt_idx[dataset] is a list
-    # of prompt indices for `dataset`. If None, all prompts will be used.
+    # Prompt indices or names for the main training data. prompt_idx[dataset] is
+    # a list of prompt indices or names for `dataset`. If an element is an int,
+    # it is interpreted as an index, otherwise as a name If None, all default
+    # prompts will be used.
     prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0])
+        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0]))
         for ds in ALL_DATASETS
     }
-    # Prompt indices for the labeled training data. If None, all prompts will be used.
+    # Prompt indices or names for the labeled training data. If None, all
+    # default prompts will be used.
     labeled_prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0])
+        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0]))
         for ds in ALL_DATASETS
     }
-    # Prompt indices for the evaluation data. If None, all prompts will be used. Defaults to all prompts.
+    # Prompt indices or names for the evaluation data. If None, all prompts will
+    # be used. Defaults to all prompts (not just default prompts).
     test_prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=False)[0])
+        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=False)[0]))
         for ds in ALL_DATASETS
     }
     data_num: int = 1000
@@ -283,16 +287,34 @@ def _format_config(config: dict) -> dict:
         else:
             config[key] = list(set(config[key]))
 
-    # Make sure prompt indices are not duplicated.
+    # Process prompt indices:
+    # 1. Make sure they are not duplicated.
+    # 2. Convert names to indices.
     for prompt_idx_dict in [
         config["prompt_idx"],
         config["labeled_prompt_idx"],
         config["test_prompt_idx"],
     ]:
-        if prompt_idx_dict is not None:
-            for ds, prompt_idxs in prompt_idx_dict.items():
-                if prompt_idxs is not None:
-                    prompt_idx_dict[ds] = sorted(set(prompt_idxs))
+        if prompt_idx_dict is None:
+            continue
+
+        for ds, prompt_idxs in prompt_idx_dict.items():
+            if prompt_idxs is None:
+                continue
+
+            processed_prompt_idxs = []
+            for idx_or_name in set(prompt_idxs):
+                if isinstance(idx_or_name, int):
+                    idx = idx_or_name
+                else:
+                    idx = prompt_name_to_index(idx_or_name, ds)
+                    if idx is None:
+                        raise ValueError(
+                            f"Prompt name {idx_or_name} not found for dataset {ds}."
+                        )
+                processed_prompt_idxs.append(idx)
+
+            prompt_idx_dict[ds] = sorted(processed_prompt_idxs)
 
     # Replace Burns datasets.
     for key in ["datasets", "labeled_datasets", "eval_datasets"]:
