@@ -31,6 +31,7 @@ from utils_extraction.method_utils import eval, mainResults
 from utils_extraction.pseudo_label import validate_pseudo_label_config
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
+from utils_generation.construct_prompts import MyPrompts
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
 
 ALL_DATASETS = [
@@ -131,6 +132,22 @@ def sacred_config():
     labeled_prefix: Optional[PrefixType] = None
     # Prefix to use for evaluation. If None, the training prefix will be used.
     test_prefix: Optional[PrefixType] = None
+    # Prompt indices for the main training data. prompt_idx[dataset] is a list
+    # of prompt indices for `dataset`. If None, all prompts will be used.
+    prompt_idx: Optional[dict[str, list[int]]] = {
+        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0])
+        for ds in ALL_DATASETS
+    }
+    # Prompt indices for the labeled training data. If None, all prompts will be used.
+    labeled_prompt_idx: Optional[dict[str, list[int]]] = {
+        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0])
+        for ds in ALL_DATASETS
+    }
+    # Prompt indices for the evaluation data. If None, all prompts will be used. Defaults to all prompts.
+    test_prompt_idx: Optional[dict[str, list[int]]] = {
+        ds: range(MyPrompts.getGlobalPromptsNum([ds], default_only=False)[0])
+        for ds in ALL_DATASETS
+    }
     data_num: int = 1000
     mode: Literal["auto", "minus", "concat"] = "auto"
     load_dir = "generation_results"
@@ -266,6 +283,17 @@ def _format_config(config: dict) -> dict:
         else:
             config[key] = list(set(config[key]))
 
+    # Make sure prompt indices are not duplicated.
+    for prompt_idx_dict in [
+        config["prompt_idx"],
+        config["labeled_prompt_idx"],
+        config["test_prompt_idx"],
+    ]:
+        if prompt_idx_dict is not None:
+            for ds, prompt_idxs in prompt_idx_dict.items():
+                if prompt_idxs is not None:
+                    prompt_idx_dict[ds] = sorted(set(prompt_idxs))
+
     # Replace Burns datasets.
     for key in ["datasets", "labeled_datasets", "eval_datasets"]:
         config[key] = replace_burns_datasets(config[key])
@@ -299,12 +327,19 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     prefix = _config["prefix"]
     labeled_prefix = _config["labeled_prefix"]
     test_prefix = _config["test_prefix"]
+    prompt_idx = _config["prompt_idx"]
+    labeled_prompt_idx = _config["labeled_prompt_idx"]
+    test_prompt_idx = _config["test_prompt_idx"]
     load_params_run_id = _config["load_params_run_id"]
 
     run_id = _run._id
-    run_dir = os.path.join(exp_dir, run_id)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    # If the run ID is not set, Sacred observers have been
+    # intentionally removed.
+    # TODO: handle this case in other places as well.
+    if run_id is not None:
+        run_dir = os.path.join(exp_dir, run_id)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
     if _config["eval_only"]:
         # TODO: adapt this handle using different prefix, labeled_prefix, and
@@ -419,7 +454,35 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     eval_results = collections.defaultdict(list)
 
     # Generate data.
+
     prefixes = set([prefix, labeled_prefix, test_prefix])
+    # Get the datasets that should be loaded and for which specific prompt
+    # indices are requested. If the dataset should not be loaded, there is no
+    # need to get prompts for it. Otherwise, if the dataset is not present in
+    # the three prompt index dictionaries, the default behavior is to include
+    # all the prompts for that dataset.
+    datasets_for_prompt_idx = set(datasets_to_load)
+    for ds_to_prompt_idx_dict in [prompt_idx, labeled_prompt_idx, test_prompt_idx]:
+        if ds_to_prompt_idx_dict is not None:
+            datasets_for_prompt_idx &= set(ds_to_prompt_idx_dict.keys())
+    # Collect all prompt indices for each dataset.
+    ds_to_prompt_idxs = collections.defaultdict(set)
+    for ds_to_prompt_idx_dict in [prompt_idx, labeled_prompt_idx, test_prompt_idx]:
+        if ds_to_prompt_idx_dict is None:
+            continue
+        for ds, prompt_idxs in ds_to_prompt_idx_dict.items():
+            if ds in datasets_for_prompt_idx:
+                ds_to_prompt_idxs[ds].update(prompt_idxs)
+    # If any of the prompt indices are None, set the prompt indices for that
+    # dataset to None to include all of its prompts.
+    for ds, prompt_idxs in ds_to_prompt_idxs.items():
+        if None in prompt_idxs:
+            ds_to_prompt_idxs[ds] = None
+    # Set all datasets without prompt indices to use all prompts.
+    for ds in datasets_to_load:
+        if ds not in ds_to_prompt_idxs:
+            ds_to_prompt_idxs[ds] = None
+
     mode_to_data = {}
     for method in _config["method_list"]:
         if method == "0-shot":
@@ -450,6 +513,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 prefix=prefix_,
                 location=_config["location"],
                 layer=_config["layer"],
+                prompt_dict=ds_to_prompt_idxs,
                 mode=mode,
                 logger=_log,
             )
@@ -493,21 +557,38 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             if _config["eval_only"]
             else set(train_datasets + labeled_train_datasets)
         )
+        # TODO: use prompt_idx, labeled_prompt_idx, and test_prompt_idx somehow
+        # for the projection datasets as well.
         # Arbitrarily use prefix instead of test_prefix to index into data_dict
         # since the number of prompts should be the same for both.
         projection_dict = {
             ds: list(range(len(data_dict[prefix][ds]))) for ds in projection_datasets
         }
 
-        train_data_dict = {
-            ds: range(len(data_dict[prefix][ds])) for ds in train_datasets
-        }
-        labeled_train_data_dict = {
-            ds: range(len(data_dict[labeled_prefix][ds]))
-            for ds in labeled_train_datasets
-        }
-
-        test_dict = {ds: range(len(data_dict[test_prefix][ds])) for ds in eval_datasets}
+        # Main training data prompt indices.
+        train_data_dict = {}
+        for ds in train_datasets:
+            if prompt_idx is not None and prompt_idx.get(ds) is not None:
+                train_data_dict[ds] = prompt_idx[ds]
+            else:
+                train_data_dict[ds] = range(len(data_dict[prefix][ds]))
+        # Labeled training data prompt indices.
+        labeled_train_data_dict = {}
+        for ds in labeled_train_datasets:
+            if (
+                labeled_prompt_idx is not None
+                and labeled_prompt_idx.get(ds) is not None
+            ):
+                labeled_train_data_dict[ds] = labeled_prompt_idx[ds]
+            else:
+                labeled_train_data_dict[ds] = range(len(data_dict[labeled_prefix][ds]))
+        # Test data prompt indices.
+        test_dict = {}
+        for ds in eval_datasets:
+            if test_prompt_idx is not None and test_prompt_idx.get(ds) is not None:
+                test_dict[ds] = test_prompt_idx[ds]
+            else:
+                test_dict[ds] = range(len(data_dict[test_prefix][ds]))
 
         n_components = 1 if method == "TPC" else -1
 

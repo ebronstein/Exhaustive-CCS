@@ -240,9 +240,17 @@ def get_hidden_states_dirs(
     confusion,
     place,
     prompt_idxs: Optional[list[int]] = None,
-) -> list[str]:
+) -> dict[int, str]:
+    """Get the directories containing hidden states.
+
+    Args: TODO
+
+    Returns:
+        dict[int, str]: A dictionary where the key is the prompt index and the
+        value is the directory containing the hidden states.
+    """
     target_short_model_name = get_model_short_name(mdl)
-    gen_dirs = []
+    gen_dirs: dict[int, str] = {}
     subdirs = [
         d for d in os.listdir(load_dir) if os.path.isdir(os.path.join(load_dir, d))
     ]
@@ -266,9 +274,14 @@ def get_hidden_states_dirs(
             and confusion_ == confusion
             and location == place
         ):
-            gen_dirs.append(gen_dir)
+            if prompt_idx in gen_dirs:
+                raise ValueError(
+                    f"Multiple directories found for dataset {set_name}, "
+                    f"prompt index {prompt_idx}"
+                )
+            gen_dirs[prompt_idx] = gen_dir
 
-    return [os.path.join(load_dir, d) for d in gen_dirs]
+    return {idx: os.path.join(load_dir, d) for idx, d in gen_dirs.items()}
 
 
 def organize_hidden_states(
@@ -323,8 +336,10 @@ def load_hidden_states(
     demean=True,
     mode="minus",
     logger=None,
-):
-    """Load generated hidden states, return a dict where key is the dataset name and values is a list. Each tuple in the list is the (x,y) pair of one prompt.
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Load generated hidden states, return a dict where the keys are the
+    prompt indices and the values are tuples of hidden states and labels for
+    the corresponding prompt.
 
     if mode == minus, then get h - h'
     if mode == concat, then get np.concatenate([h,h'])
@@ -333,47 +348,60 @@ def load_hidden_states(
     Raises:
         ValueError: If no hidden states are found.
     """
-    dir_list = get_hidden_states_dirs(
+    prompt_idx_to_dir = get_hidden_states_dirs(
         mdl, set_name, load_dir, data_num, confusion, place, prompt_idx
     )
-    if not dir_list:
+    if not prompt_idx_to_dir:
         raise ValueError(
             f"No hidden states found in directory {load_dir} for model={mdl} "
             f"dataset={set_name} data_num={data_num} prefix={confusion} "
             f"location={place} prompt_idx={prompt_idx}"
         )
 
-    append_list = ["_" + location + str(layer) for _ in dir_list]
+    suffix = "_" + location + str(layer)
 
-    hidden_states = [
-        organize_hidden_states(
+    hidden_states = {
+        prompt_idx: organize_hidden_states(
             (
-                np.load(os.path.join(w, "0{}.npy".format(app))),
-                np.load(os.path.join(w, "1{}.npy".format(app))),
+                np.load(os.path.join(hs_dir, "0{}.npy".format(suffix))),
+                np.load(os.path.join(hs_dir, "1{}.npy".format(suffix))),
             ),
             mode=mode,
         )
-        for w, app in zip(dir_list, append_list)
-    ]
+        for (prompt_idx, hs_dir) in prompt_idx_to_dir.items()
+    }
 
     # normalize
-    hidden_states = [normalize(w, scale, demean) for w in hidden_states]
+    hidden_states = {
+        prompt_idx: normalize(hs, scale, demean)
+        for prompt_idx, hs in hidden_states.items()
+    }
     if logger is not None:
         hs_shape = hidden_states[0].shape if hidden_states else "None"
         logger.info(
             "%s prompts for %s, with shape %s"
             % (len(hidden_states), set_name, hs_shape)
         )
-    labels = [
-        np.array(pd.read_csv(os.path.join(w, "frame.csv"))["label"].to_list())
-        for w in dir_list
-    ]
+    labels = {
+        prompt_idx: np.array(
+            pd.read_csv(os.path.join(hs_dir, "frame.csv"))["label"].to_list()
+        )
+        for prompt_idx, hs_dir in prompt_idx_to_dir.items()
+    }
 
-    return [(u, v) for u, v in zip(hidden_states, labels)]
+    hs_and_labels = {}
+    for prompt_idx, hs in hidden_states.items():
+        hs_and_labels[prompt_idx] = (hs, labels[prompt_idx])
+
+    return hs_and_labels
 
 
-def make_permutation_dict(data_list, rate=0.6) -> tuple[np.ndarray, np.ndarray]:
-    length = len(data_list[0][1])
+def make_permutation_dict(
+    prompt_idx_to_hs_and_labels: dict[int, tuple[np.ndarray, np.ndarray]], rate=0.6
+) -> tuple[np.ndarray, np.ndarray]:
+    # Get the hidden states from the first value in the dict (arbitrary order).
+    hidden_states = list(prompt_idx_to_hs_and_labels.values())[0][1]
+    length = len(hidden_states)
     permutation = np.random.permutation(range(length)).reshape(-1)
     return (
         permutation[: int(length * rate)],

@@ -99,7 +99,7 @@ def instantiate_model(
         ValueError: If attempting to load in 8-bit weights with fp32 weights.
     """
     device = torch.device(device)
-    kwargs["device_map"] = {"": device}
+    kwargs["device_map"] = "auto"
 
     with prevent_name_conflicts():
         model_cfg = AutoConfig.from_pretrained(model_str, use_auth_token=use_auth_token)

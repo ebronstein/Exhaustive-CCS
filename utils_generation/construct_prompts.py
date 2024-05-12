@@ -42,150 +42,191 @@ label_dict = {
     "story-cloze": ["choice 1", "choice 2"],
 }
 
-# prompt_dict[set_name] is a list or OrderedDict of prompts for the dataset
-# `set_name`. The keys are either the list indices if a list or arbitrary keys
-# if an OrderedDict. The elements/values are either a [template, tokens] list or
-# a PromptTemplate instance.
+# prompt_dict[set_name] is an OrderedDict of prompts for the dataset
+# `set_name`. The keys are a list or arbitrary keys, and the elements/values are
+# either a [template, tokens, is_default] list or a [PromptTemplate instance,
+# is_default] list, where is_default specifies if the prompt is a default prompt.
 prompt_dict = {
     "imdb": OrderedDict(
         {
             0: [
                 "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
                 ["text", "0", "1"],
+                True,
             ],
             1: [
                 "Consider the following example: ''' {} '''\nBetween {} and {}, which is the sentiment of this example?",
                 ["text", "0", "1"],
+                True,
             ],
-            "alice_explicit_opinion_1": alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion1,
-            "alice_explicit_opinion_2": alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion2,
+            "alice_explicit_opinion_1": [
+                alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion1,
+                False,
+            ],
+            "alice_explicit_opinion_2": [
+                alice_explicit_opinion_prompt_template.IMDBAliceExplicitOpinion2,
+                False,
+            ],
         }
     ),
-    "amazon-polarity": [
-        [
-            "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
-            ["content", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nBetween {} and {}, which is the sentiment of this example?",
-            ["content", "0", "1"],
-        ],
-    ],
-    "ag-news": [
-        [
-            "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
-            ["text", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
-            ["text", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
-            ["text", "0", "1"],
-        ],
-        [
-            "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
-            ["text", "0", "1"],
-        ],
-        [
-            "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
-            ["text", "0", "1"],
-        ],
-        [
-            "{}\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
-            ["text", "0", "1"],
-        ],
-        [
-            "{}\nWhat label best describes this news article, choice 1: {}, or choice 2: {}?",
-            ["text", "0", "1"],
-        ],
-        [
-            "{}\nWhich section of a newspaper would this article likely appear in, choice 1: {}, or choice 2: {}?",
-            ["text", "0", "1"],
-        ],
-    ],
-    "dbpedia-14": [
-        [
-            "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
-            ["content", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
-            ["content", "0", "1"],
-        ],
-        [
-            "Consider the following example: ''' {} '''\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
-            ["content", "0", "1"],
-        ],
-        [
-            "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
-            ["content", "0", "1"],
-        ],
-        [
-            "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
-            ["content", "0", "1"],
-        ],
-        [
-            "{}\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
-            ["content", "0", "1"],
-        ],
-        [
-            "{}\nWhat category does the paragraph belong to, choice 1: {}, or choice 2: {}?",
-            ["content", "0", "1"],
-        ],
-        [
-            "{}\nWhat label best describes this paragraph, choice 1: {}, or choice 2: {}?",
-            ["content", "0", "1"],
-        ],
-    ],
-    "story-cloze": [
-        [
-            "Consider the following story: ''' {} {} {} {} '''\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story, choice 1 or choice 2?",
-            [
-                "input_sentence_1",
-                "input_sentence_2",
-                "input_sentence_3",
-                "input_sentence_4",
-                "sentence_quiz1",
-                "sentence_quiz2",
+    "amazon-polarity": OrderedDict(
+        {
+            0: [
+                "Consider the following example: ''' {} '''\nBetween {} and {}, the sentiment of this example is",
+                ["content", "0", "1"],
+                True,
             ],
-        ],
-        [
-            "Consider the following story: ''' {} {} {} {} '''\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story?",
-            [
-                "input_sentence_1",
-                "input_sentence_2",
-                "input_sentence_3",
-                "input_sentence_4",
-                "sentence_quiz1",
-                "sentence_quiz2",
+            1: [
+                "Consider the following example: ''' {} '''\nBetween {} and {}, which is the sentiment of this example?",
+                ["content", "0", "1"],
+                True,
             ],
-        ],
-        [
-            "{} {} {} {}\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story, choice 1 or choice 2?",
-            [
-                "input_sentence_1",
-                "input_sentence_2",
-                "input_sentence_3",
-                "input_sentence_4",
-                "sentence_quiz1",
-                "sentence_quiz2",
+        }
+    ),
+    "ag-news": OrderedDict(
+        {
+            0: [
+                "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
+                ["text", "0", "1"],
+                True,
             ],
-        ],
-    ],
-    "copa": [
-        [
-            "Consider the following premise: ''' {} ''' Choice 1: {}\nChoice 2: {}\nQ: Which one is more likely to be the {}, choice 1 or choice 2?",
-            ["premise", "choice1", "choice2", "question"],
-        ],
-    ],
-    "rte": [
-        [
-            '{}\nQuestion: Does this imply that "{}", yes or no?',
-            ["premise", "hypothesis"],
-        ],
-    ],
+            1: [
+                "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
+                ["text", "0", "1"],
+                True,
+            ],
+            2: [
+                "Consider the following example: ''' {} '''\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
+                ["text", "0", "1"],
+                True,
+            ],
+            3: [
+                "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
+                ["text", "0", "1"],
+                True,
+            ],
+            4: [
+                "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
+                ["text", "0", "1"],
+                True,
+            ],
+            5: [
+                "{}\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
+                ["text", "0", "1"],
+                True,
+            ],
+            6: [
+                "{}\nWhat label best describes this news article, choice 1: {}, or choice 2: {}?",
+                ["text", "0", "1"],
+                True,
+            ],
+            7: [
+                "{}\nWhich section of a newspaper would this article likely appear in, choice 1: {}, or choice 2: {}?",
+                ["text", "0", "1"],
+                True,
+            ],
+        }
+    ),
+    "dbpedia-14": OrderedDict(
+        {
+            0: [
+                "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
+                ["content", "0", "1"],
+                True,
+            ],
+            1: [
+                "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
+                ["content", "0", "1"],
+                True,
+            ],
+            2: [
+                "Consider the following example: ''' {} '''\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
+                ["content", "0", "1"],
+                True,
+            ],
+            3: [
+                "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
+                ["content", "0", "1"],
+                True,
+            ],
+            4: [
+                "{}\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, what is the topic of this example?",
+                ["content", "0", "1"],
+                True,
+            ],
+            5: [
+                "{}\nWhich is the topic of this example, choice 1: {}, or choice 2: {}?",
+                ["content", "0", "1"],
+                True,
+            ],
+            6: [
+                "{}\nWhat category does the paragraph belong to, choice 1: {}, or choice 2: {}?",
+                ["content", "0", "1"],
+                True,
+            ],
+            7: [
+                "{}\nWhat label best describes this paragraph, choice 1: {}, or choice 2: {}?",
+                ["content", "0", "1"],
+                True,
+            ],
+        }
+    ),
+    # "story-cloze": [
+    #     [
+    #         "Consider the following story: ''' {} {} {} {} '''\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story, choice 1 or choice 2?",
+    #         [
+    #             "input_sentence_1",
+    #             "input_sentence_2",
+    #             "input_sentence_3",
+    #             "input_sentence_4",
+    #             "sentence_quiz1",
+    #             "sentence_quiz2",
+    #         ],
+    #         True,
+    #     ],
+    #     [
+    #         "Consider the following story: ''' {} {} {} {} '''\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story?",
+    #         [
+    #             "input_sentence_1",
+    #             "input_sentence_2",
+    #             "input_sentence_3",
+    #             "input_sentence_4",
+    #             "sentence_quiz1",
+    #             "sentence_quiz2",
+    #         ],
+    #         True,
+    #     ],
+    #     [
+    #         "{} {} {} {}\nChoice 1: {}\nChoice 2: {}\nWhich is the more plausible ending of this story, choice 1 or choice 2?",
+    #         [
+    #             "input_sentence_1",
+    #             "input_sentence_2",
+    #             "input_sentence_3",
+    #             "input_sentence_4",
+    #             "sentence_quiz1",
+    #             "sentence_quiz2",
+    #         ],
+    #         True,
+    #     ],
+    # ],
+    "copa": OrderedDict(
+        {
+            0: [
+                "Consider the following premise: ''' {} ''' Choice 1: {}\nChoice 2: {}\nQ: Which one is more likely to be the {}, choice 1 or choice 2?",
+                ["premise", "choice1", "choice2", "question"],
+                True,
+            ],
+        }
+    ),
+    "rte": OrderedDict(
+        {
+            0: [
+                '{}\nQuestion: Does this imply that "{}", yes or no?',
+                ["premise", "hypothesis"],
+                True,
+            ],
+        }
+    ),
 }
 
 
@@ -433,12 +474,17 @@ class MyPrompts:
             self.module = DatasetTemplates(*getLoadName(set_name))
 
     @classmethod
-    def getGlobalPromptsNum(cls, set_name_list):
+    def getGlobalPromptsNum(cls, set_name_list, default_only=False):
         res = []
         for set_name in set_name_list:
             num = 0
             if set_name in prompt_dict.keys():
-                num += len(prompt_dict[set_name])
+                if default_only:
+                    for prompt in prompt_dict[set_name].values():
+                        if prompt[-1]:  # Access is_default flag.
+                            num += 1
+                else:
+                    num += len(prompt_dict[set_name])
             if set_name not in ["ag-news", "dbpedia-14"]:
                 num += len(DatasetTemplates(*getLoadName(set_name)).all_template_names)
             if set_name == "copa":
@@ -447,13 +493,16 @@ class MyPrompts:
 
         return res
 
-    def getPromptsNum(self):
-        res = (
-            len(self.prompt_dict)
-            if self.nomodule
-            else len(self.module.all_template_names) + len(self.prompt_dict)
-        )
-        # do not use the last four prompts
+    def getPromptsNum(self, default_only=False):
+        if self.nomodule:
+            res = len(self.prompt_dict)
+        else:
+            if default_only:
+                # Access is_default flag as prompt[-1].
+                res = sum([1 for prompt in self.prompt_dict.values() if prompt[-1]])
+            else:
+                res = len(self.module.all_template_names) + len(self.prompt_dict)
+        # Do not use the last four prompts for copa.
         return res if self.set_name != "copa" else res - 4
 
     # qaexamples is tuple (qlist, alist), and these 5-len examples are fixed across the whole run.
@@ -507,12 +556,16 @@ class MyPrompts:
 
             idx = prompt_idx - (self.getPromptsNum() - len(self.prompt_dict))
             prompt_template = list(self.prompt_dict.values())[idx]
-            if isinstance(prompt_template, PromptTemplate):
-                question = prompt_template.apply(
+            if (
+                isinstance(prompt_template, list)
+                and len(prompt_template) == 2
+                and isinstance(prompt_template[0], PromptTemplate)
+            ):
+                question = prompt_template[0].apply(
                     example, choice_labels, partition_index, qaexamples
                 )
             else:
-                template, token = prompt_template[0], prompt_template[1]
+                template, token, _ = prompt_template  # is_default is unused.
                 formatter = []
                 for w in token:
                     if "e.g." in w:  # format is "e.g.0_sth"
