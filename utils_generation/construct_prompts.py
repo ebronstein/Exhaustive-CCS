@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from promptsource.templates import DatasetTemplates
 
+from utils_extraction.load_utils import ALL_DATASETS
 from utils_generation import alice_explicit_opinion_prompt_template
 from utils_generation.prompt_template import PromptTemplate
 
@@ -52,7 +53,7 @@ EXCLUDE_PROMPTSOURCE_DATASETS = ("ag-news", "dbpedia-14")
 # `set_name`. The keys are a list or arbitrary keys, and the elements/values are
 # either a [template, tokens, is_default] list or a [PromptTemplate instance,
 # is_default] list, where is_default specifies if the prompt is a default prompt.
-prompt_dict = {
+prompt_dict: dict[str, dict[Union[str, int], list]] = {
     "imdb": OrderedDict(
         {
             # Default prompts added in Burns et. al.
@@ -658,19 +659,60 @@ def prompt_name_to_index(prompt_name: str, set_name: str) -> Optional[int]:
     return None
 
 
+def get_global_prompts_num(set_name_list, default_only=False) -> list[int]:
+    res = []
+    for set_name in set_name_list:
+        num = 0
+        if set_name in prompt_dict.keys():
+            if default_only:
+                for prompt in prompt_dict[set_name].values():
+                    if prompt[-1]:  # Access is_default flag.
+                        num += 1
+            else:
+                num += len(prompt_dict[set_name])
+        if set_name not in EXCLUDE_PROMPTSOURCE_DATASETS:
+            num += len(DatasetTemplates(*getLoadName(set_name)).all_template_names)
+        if set_name == "copa":
+            num -= 4  # do not use the last four prompts
+        res.append(num)
+
+    return res
+
+
+### Prompt index subsets.
+# All prompts.
+ALL_PROMPT_IDXS = {
+    ds: list(range(get_global_prompts_num([ds], default_only=False)[0]))
+    for ds in ALL_DATASETS
+}
+# Default subset.
+DEFAULT_PROMPT_IDXS = {
+    ds: list(range(get_global_prompts_num([ds], default_only=True)[0]))
+    for ds in ALL_DATASETS
+}
+# Alice explicit opinion subset.
 # Mapping from dataset to prompt name for the Alice explicit opinion subset.
 ALICE_EXPLICIT_OPINION_PROMPT_NAMES = {
     ds: [
         n
-        for n in prompt_dict[ds]
+        for n in prompt_dict.get(ds, [])
         if isinstance(n, str) and n.startswith("alice_explicit_opinion")
     ]
-    for ds in prompt_dict.keys()
+    for ds in ALL_DATASETS
 }
 # Mapping from dataset to prompt index for the Alice explicit opinion subset.
 ALICE_EXPLICIT_OPINION_PROMPT_IDXS = {
     ds: [prompt_name_to_index(prompt, ds) for prompt in prompts]
     for ds, prompts in ALICE_EXPLICIT_OPINION_PROMPT_NAMES.items()
+}
+# All prompt subsets.
+PROMPT_SUBSETS = {
+    ds: {
+        "all": ALL_PROMPT_IDXS[ds],
+        "default": DEFAULT_PROMPT_IDXS[ds],
+        "alice_explicit_opinion": ALICE_EXPLICIT_OPINION_PROMPT_IDXS[ds],
+    }
+    for ds in ALL_DATASETS
 }
 
 
@@ -689,26 +731,6 @@ class MyPrompts:
         else:
             self.nomodule = False
             self.module = DatasetTemplates(*getLoadName(set_name))
-
-    @classmethod
-    def getGlobalPromptsNum(cls, set_name_list, default_only=False):
-        res = []
-        for set_name in set_name_list:
-            num = 0
-            if set_name in prompt_dict.keys():
-                if default_only:
-                    for prompt in prompt_dict[set_name].values():
-                        if prompt[-1]:  # Access is_default flag.
-                            num += 1
-                else:
-                    num += len(prompt_dict[set_name])
-            if set_name not in EXCLUDE_PROMPTSOURCE_DATASETS:
-                num += len(DatasetTemplates(*getLoadName(set_name)).all_template_names)
-            if set_name == "copa":
-                num -= 4  # do not use the last four prompts
-            res.append(num)
-
-        return res
 
     def getPromptsNum(self, default_only=False):
         if self.nomodule:

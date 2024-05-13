@@ -18,6 +18,7 @@ from utils import file_utils
 from utils_extraction import load_utils
 from utils_extraction.classifier import ContrastPairClassifier, SpanDirsCombination
 from utils_extraction.load_utils import (
+    ALL_DATASETS,
     get_params_dir,
     load_hidden_states_for_datasets,
     make_permutation_dict,
@@ -31,20 +32,12 @@ from utils_extraction.method_utils import eval, mainResults
 from utils_extraction.pseudo_label import validate_pseudo_label_config
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
-from utils_generation.construct_prompts import MyPrompts, prompt_name_to_index
+from utils_generation.construct_prompts import (
+    PROMPT_SUBSETS,
+    get_global_prompts_num,
+    prompt_name_to_index,
+)
 from utils_generation.hf_auth_token import HF_AUTH_TOKEN
-
-ALL_DATASETS = [
-    "imdb",
-    "amazon-polarity",
-    "ag-news",
-    "dbpedia-14",
-    "copa",
-    "rte",
-    "boolq",
-    "qnli",
-    "piqa",
-]
 
 PrefixType = Literal[
     "normal",
@@ -136,22 +129,16 @@ def sacred_config():
     # a list of prompt indices or names for `dataset`. If an element is an int,
     # it is interpreted as an index, otherwise as a name If None, all default
     # prompts will be used.
-    prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0]))
-        for ds in ALL_DATASETS
-    }
+    prompt_idx: Optional[dict[str, list[int]]] = None
+    prompt_subset: Optional[str] = "default"
     # Prompt indices or names for the labeled training data. If None, all
     # default prompts will be used.
-    labeled_prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=True)[0]))
-        for ds in ALL_DATASETS
-    }
+    labeled_prompt_idx: Optional[dict[str, list[int]]] = None
+    labeled_prompt_subset: Optional[str] = "default"
     # Prompt indices or names for the evaluation data. If None, all prompts will
     # be used. Defaults to all prompts (not just default prompts).
-    test_prompt_idx: Optional[dict[str, list[int]]] = {
-        ds: list(range(MyPrompts.getGlobalPromptsNum([ds], default_only=False)[0]))
-        for ds in ALL_DATASETS
-    }
+    test_prompt_idx: Optional[dict[str, list[int]]] = None
+    test_prompt_subset: Optional[str] = "all"
     data_num: int = 1000
     mode: Literal["auto", "minus", "concat"] = "auto"
     load_dir = "generation_results"
@@ -282,10 +269,31 @@ def _format_config(config: dict) -> dict:
 
     # Convert single strings to lists and remove duplicates.
     for key in ["datasets", "labeled_datasets", "eval_datasets", "method_list"]:
-        if isinstance(config[key], str):
-            config[key] = [config[key]]
-        else:
-            config[key] = list(set(config[key]))
+        ds_list = config[key]
+        if isinstance(ds_list, str):
+            ds_list = [ds_list]
+        config[key] = list(set(ds_list))
+
+    # Replace Burns datasets.
+    for key in ["datasets", "labeled_datasets", "eval_datasets"]:
+        config[key] = list(set(replace_burns_datasets(config[key])))
+
+    # Set prompt indices based on prompt subsets if provided.
+    for idx_key, subset_key, dataset_key in zip(
+        ["prompt_idx", "labeled_prompt_idx", "test_prompt_idx"],
+        ["prompt_subset", "labeled_prompt_subset", "test_prompt_subset"],
+        ["datasets", "labeled_datasets", "eval_datasets"],
+    ):
+        prompt_subset = config[subset_key]
+        if prompt_subset is not None:
+            prompt_idx = config[idx_key]
+            assert (
+                prompt_idx is None
+            ), f"Cannot specify both {subset_key} and {idx_key}."
+            # Set the prompt indices to the subset.
+            config[idx_key] = {
+                ds: PROMPT_SUBSETS[ds][prompt_subset] for ds in config[dataset_key]
+            }
 
     # Process prompt indices:
     # 1. Make sure they are not duplicated.
@@ -315,10 +323,6 @@ def _format_config(config: dict) -> dict:
                 processed_prompt_idxs.append(idx)
 
             prompt_idx_dict[ds] = sorted(processed_prompt_idxs)
-
-    # Replace Burns datasets.
-    for key in ["datasets", "labeled_datasets", "eval_datasets"]:
-        config[key] = replace_burns_datasets(config[key])
 
     config["location"] = parser_utils.get_states_location_str(
         config["location"], config["model"], use_auth_token=HF_AUTH_TOKEN

@@ -15,8 +15,8 @@ from transformers import (
 
 from datasets import load_dataset
 from utils_generation.construct_prompts import (
-    MyPrompts,
     constructPrompt,
+    get_global_prompts_num,
     getLoadName,
     prompt_name_to_index,
 )
@@ -26,24 +26,33 @@ from utils_generation.save_utils import get_hidden_states_dir
 
 def loadModel(mdl_name, cache_dir, parallelize):
     print("-------- model and tokenizer --------")
-    print("loading model and tokenizer. model name = {}, cache_dir = {}".format(
-        mdl_name, cache_dir))
+    print(
+        "loading model and tokenizer. model name = {}, cache_dir = {}".format(
+            mdl_name, cache_dir
+        )
+    )
 
     with prevent_name_conflicts():
         if mdl_name in ["gpt-neo-2.7B", "gpt-j-6B"]:
-            model = AutoModelForCausalLM.from_pretrained("EleutherAI/{}".format(mdl_name))
+            model = AutoModelForCausalLM.from_pretrained(
+                "EleutherAI/{}".format(mdl_name)
+            )
             tokenizer = AutoTokenizer.from_pretrained("EleutherAI/{}".format(mdl_name))
         elif mdl_name in ["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"]:
             model = GPT2LMHeadModel.from_pretrained(mdl_name)
             tokenizer = GPT2Tokenizer.from_pretrained(mdl_name)
         elif "T0" in mdl_name:
-            model = AutoModelForSeq2SeqLM.from_pretrained("bigscience/{}".format(mdl_name))
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                "bigscience/{}".format(mdl_name)
+            )
             tokenizer = AutoTokenizer.from_pretrained("bigscience/{}".format(mdl_name))
         elif "unifiedqa" in mdl_name:
             model = T5ForConditionalGeneration.from_pretrained("allenai/" + mdl_name)
             tokenizer = AutoTokenizer.from_pretrained("allenai/" + mdl_name)
         elif "x" in mdl_name:
-            model = AutoModelForSequenceClassification.from_pretrained("microsoft/{}".format(mdl_name))
+            model = AutoModelForSequenceClassification.from_pretrained(
+                "microsoft/{}".format(mdl_name)
+            )
             tokenizer = AutoTokenizer.from_pretrained("microsoft/" + mdl_name)
         elif "roberta" in mdl_name:
             model = AutoModelForSequenceClassification.from_pretrained(mdl_name)
@@ -54,8 +63,11 @@ def loadModel(mdl_name, cache_dir, parallelize):
 
     model.eval()
 
-    print("finish loading model to memory. Now start loading to gpu. parallelize = {}".format(
-        parallelize == True))
+    print(
+        "finish loading model to memory. Now start loading to gpu. parallelize = {}".format(
+            parallelize == True
+        )
+    )
     if parallelize:
         model.parallelize()
     else:
@@ -69,18 +81,17 @@ def loadModel(mdl_name, cache_dir, parallelize):
 
 
 def get_sample_data(set_name, data_list, total_num):
-    '''
-        set_name:   the name of the dataset, some datasets have special token name.
-        data_list:  a list of dataframe, with order queals to token_list
-        max_num:    number of data point that wants to take, default is twice as final size, considering that some examples are too long and could be dropped.
-    '''
+    """
+    set_name:   the name of the dataset, some datasets have special token name.
+    data_list:  a list of dataframe, with order queals to token_list
+    max_num:    number of data point that wants to take, default is twice as final size, considering that some examples are too long and could be dropped.
+    """
 
     lbl_tag = "label" if set_name != "story-cloze" else "answer_right_ending"
 
     label_set = set(data_list[0][lbl_tag].to_list())
     label_num = len(label_set)
-    data_num_lis = get_balanced_num(
-        total_num=total_num, lis_len=label_num)
+    data_num_lis = get_balanced_num(total_num=total_num, lis_len=label_num)
 
     # randomized
     data_list = [w.sample(frac=1).reset_index(drop=True) for w in data_list]
@@ -92,10 +103,23 @@ def get_sample_data(set_name, data_list, total_num):
         # the length of data_list is at most 2
         prior_size = len(prior[prior[lbl_tag] == lbl])
         if prior_size < data_num_lis[i]:
-            tmp_lis.append(pd.concat(
-                [prior[prior[lbl_tag] == lbl], data_list[1][data_list[1][lbl_tag] == lbl][: data_num_lis[i] - prior_size]], ignore_index=True))
+            tmp_lis.append(
+                pd.concat(
+                    [
+                        prior[prior[lbl_tag] == lbl],
+                        data_list[1][data_list[1][lbl_tag] == lbl][
+                            : data_num_lis[i] - prior_size
+                        ],
+                    ],
+                    ignore_index=True,
+                )
+            )
         else:
-            tmp_lis.append(prior[prior[lbl_tag] == lbl].sample(data_num_lis[i]).reset_index(drop=True))
+            tmp_lis.append(
+                prior[prior[lbl_tag] == lbl]
+                .sample(data_num_lis[i])
+                .reset_index(drop=True)
+            )
 
     return pd.concat(tmp_lis).sample(frac=1).reset_index(drop=True)
 
@@ -107,10 +131,10 @@ def get_balanced_num(total_num, lis_len):
 
 
 def loadFromDatasets(set_name, cache_dir, max_num):
-    '''
-        This function will load datasets from module or raw csv, and then return a pd DataFrame
-        This DataFrame can be used to construct the example
-    '''
+    """
+    This function will load datasets from module or raw csv, and then return a pd DataFrame
+    This DataFrame can be used to construct the example
+    """
     if set_name != "story-cloze":
         raw_set = load_dataset(*getLoadName(set_name))
     else:
@@ -126,16 +150,17 @@ def loadFromDatasets(set_name, cache_dir, max_num):
     # This is a dataframe with random order data
     # Can just take enough data from scratch and then stop as needed
     # the length of raw_data will be 2 times as the intended length
-    raw_data = get_sample_data(set_name, [raw_set[w].to_pandas()
-                               for w in token_list], 2 * max_num)
+    raw_data = get_sample_data(
+        set_name, [raw_set[w].to_pandas() for w in token_list], 2 * max_num
+    )
 
     return raw_data
 
 
 def loadDatasets(args, tokenizer):
-    '''
-        This fnction will return the datasets, their corresponding name (with prompt suffix, confusion suffix, etc), which should be used to save the hidden states
-    '''
+    """
+    This fnction will return the datasets, their corresponding name (with prompt suffix, confusion suffix, etc), which should be used to save the hidden states
+    """
     print("-------- datasets --------")
     base_dir = args.data_base_dir
     datasets = args.datasets
@@ -148,17 +173,24 @@ def loadDatasets(args, tokenizer):
     # deal with the length of prompt_idx_list, and extend
     # end up making prompt_idx_list and set_list with the same length
     if not args.swipe:
-        print("Datasets: {}, prompt idxs: {}, prompt names: {}.".format(
-            datasets, prompt_idx_list, prompt_names))
+        print(
+            "Datasets: {}, prompt idxs: {}, prompt names: {}.".format(
+                datasets, prompt_idx_list, prompt_names
+            )
+        )
         if prompt_idx_list is None:
             set_list = []
             prompt_idx_list = []
         else:
             set_num = len(datasets)
             # Repeat each dataset for each prompt index.
-            set_list = [set_name for set_name in datasets for _ in range(len(prompt_idx_list))]
+            set_list = [
+                set_name for set_name in datasets for _ in range(len(prompt_idx_list))
+            ]
             # Repeat each prompt index for each dataset.
-            prompt_idx_list = [prompt_idx for _ in range(set_num) for prompt_idx in prompt_idx_list]
+            prompt_idx_list = [
+                prompt_idx for _ in range(set_num) for prompt_idx in prompt_idx_list
+            ]
 
         if prompt_names is not None:
             for set_name in datasets:
@@ -175,18 +207,30 @@ def loadDatasets(args, tokenizer):
     else:
         # swipe: for each dataset, will use all the prompts
         # Number of prompts for each dataset.
-        prompt_idx_list = MyPrompts.getGlobalPromptsNum(datasets)
-        print("Consider datasets {} with {} prompts each.".format(datasets, prompt_idx_list))
+        prompt_idx_list = get_global_prompts_num(datasets)
+        print(
+            "Consider datasets {} with {} prompts each.".format(
+                datasets, prompt_idx_list
+            )
+        )
         # Repeat each dataset for each prompt.
-        set_list = [[set for _ in range(n_prompts)] for set, n_prompts in zip(datasets, prompt_idx_list)]
+        set_list = [
+            [set for _ in range(n_prompts)]
+            for set, n_prompts in zip(datasets, prompt_idx_list)
+        ]
         # Repeat each prompt index for each dataset.
-        prompt_idx_list = [[w for w in range(n_prompts)] for n_prompts in prompt_idx_list]
-        set_list, prompt_idx_list = [w for j in set_list for w in j], [w for j in prompt_idx_list for w in j]
+        prompt_idx_list = [
+            [w for w in range(n_prompts)] for n_prompts in prompt_idx_list
+        ]
+        set_list, prompt_idx_list = [w for j in set_list for w in j], [
+            w for j in prompt_idx_list for w in j
+        ]
 
     # deal with the length of `num_data`
     # end up making num_data and set_list with the same length
     assert len(num_data) == 1 or len(num_data) == len(
-        set_list), "The length of `num_data` should either be one or be the same as `datasets`!"
+        set_list
+    ), "The length of `num_data` should either be one or be the same as `datasets`!"
     if len(num_data) == 1:
         num_data = [num_data[0] for _ in set_list]
 
@@ -201,11 +245,9 @@ def loadDatasets(args, tokenizer):
         os.makedirs(cache_dir, exist_ok=True)
 
     frame_dict = {}
-    reload_set_name = ""    # Only reload if this is the first prompt of a dataset
-    for (set_name, prompt_idx, max_num) in zip(set_list, prompt_idx_list, num_data):
-        path = os.path.join(
-            base_dir, "rawdata_{}_{}.csv".format(set_name, max_num))
-
+    reload_set_name = ""  # Only reload if this is the first prompt of a dataset
+    for set_name, prompt_idx, max_num in zip(set_list, prompt_idx_list, num_data):
+        path = os.path.join(base_dir, "rawdata_{}_{}.csv".format(set_name, max_num))
 
         # load datasets
         # if complete dataset exists and reload == False, will directly load this dataset
@@ -215,18 +257,28 @@ def loadDatasets(args, tokenizer):
         complete_path = get_hidden_states_dir(dataset_name_w_num, args)
 
         if reload == False and os.path.exists(os.path.join(complete_path, "frame.csv")):
-            frame = pd.read_csv(os.path.join(complete_path, "frame.csv"), converters={"selection": eval})
+            frame = pd.read_csv(
+                os.path.join(complete_path, "frame.csv"), converters={"selection": eval}
+            )
             frame_dict[dataset_name_w_num] = frame
             if args.print_more:
-                print("load post-processing {} from {}, length = {}".format(
-                    dataset_name_w_num, complete_path, max_num))
+                print(
+                    "load post-processing {} from {}, length = {}".format(
+                        dataset_name_w_num, complete_path, max_num
+                    )
+                )
 
-        else:   # either reload, or this specific model / confusion args has not been saved yet.
-            if (reload == False or reload_set_name == set_name) and os.path.exists(path):
+        else:  # either reload, or this specific model / confusion args has not been saved yet.
+            if (reload == False or reload_set_name == set_name) and os.path.exists(
+                path
+            ):
                 raw_data = pd.read_csv(path)
                 if args.print_more:
-                    print("load raw {} from {}, length = {}".format(
-                        set_name, path, max_num))
+                    print(
+                        "load raw {} from {}, length = {}".format(
+                            set_name, path, max_num
+                        )
+                    )
             else:
                 if args.print_more:
                     print("load raw dataset {} from module.".format(set_name))
@@ -239,8 +291,15 @@ def loadDatasets(args, tokenizer):
 
             # now start formatting
             # construct the examples according to prompt_ids and so on
-            frame = constructPrompt(set_name=set_name, frame=raw_data,
-                                    prompt_idx=prompt_idx, mdl_name=args.model, tokenizer=tokenizer, max_num = max_num, confusion = confusion)
+            frame = constructPrompt(
+                set_name=set_name,
+                frame=raw_data,
+                prompt_idx=prompt_idx,
+                mdl_name=args.model,
+                tokenizer=tokenizer,
+                max_num=max_num,
+                confusion=confusion,
+            )
 
             frame_dict[dataset_name_w_num] = frame
 
@@ -249,13 +308,11 @@ def loadDatasets(args, tokenizer):
                 os.makedirs(args.save_base_dir, exist_ok=True)
             if not os.path.exists(complete_path):
                 os.makedirs(complete_path, exist_ok=True)
-            frame.to_csv(os.path.join(complete_path, "frame.csv"), index = False)
-
+            frame.to_csv(os.path.join(complete_path, "frame.csv"), index=False)
 
         # print an example
         if args.print_more:
             print("[example]:\n{}".format(frame.loc[0, "null"]))
-
 
     print("-------- datasets --------")
     return frame_dict
