@@ -42,6 +42,8 @@ label_dict = {
     "story-cloze": ["choice 1", "choice 2"],
 }
 
+MULTIPLE_CHOICE_DATASETS = ["ag_news", "dbpedia_14"]
+
 # Datasets for which promptsource prompts are not used. Only custom prompts from
 # prompt_dict are used.
 EXCLUDE_PROMPTSOURCE_DATASETS = ("ag-news", "dbpedia-14")
@@ -179,6 +181,7 @@ prompt_dict = {
     ),
     "dbpedia-14": OrderedDict(
         {
+            # Default prompts added in Burns et. al.
             0: [
                 "Consider the following example: ''' {} '''\nChoice 1: {}. Choice 2: {}.Between choice 1 and choice 2, the topic of this example is ",
                 ["content", "0", "1"],
@@ -218,6 +221,39 @@ prompt_dict = {
                 "{}\nWhat label best describes this paragraph, choice 1: {}, or choice 2: {}?",
                 ["content", "0", "1"],
                 True,
+            ],
+            # Alice explicit opinion.
+            "alice_explicit_opinion_1": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion1,
+                False,
+            ],
+            "alice_explicit_opinion_2": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion2,
+                False,
+            ],
+            "alice_explicit_opinion_3": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion3,
+                False,
+            ],
+            "alice_explicit_opinion_4": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion4,
+                False,
+            ],
+            "alice_explicit_opinion_5": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion5,
+                False,
+            ],
+            "alice_explicit_opinion_6": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion6,
+                False,
+            ],
+            "alice_explicit_opinion_7": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion7,
+                False,
+            ],
+            "alice_explicit_opinion_8": [
+                alice_explicit_opinion_prompt_template.DBpediaAliceExplicitOpinion8,
+                False,
             ],
         }
     ),
@@ -274,6 +310,114 @@ prompt_dict = {
                 '{}\nQuestion: Does this imply that "{}", yes or no?',
                 ["premise", "hypothesis"],
                 True,
+            ],
+            "alice_explicit_opinion_gpt3_style": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionGpt3Style,
+                False,
+            ],
+            "alice_explicit_opinion_mnli_crowdsource": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionMnliCrowdsource,
+                False,
+            ],
+            "alice_explicit_opinion_based_on_previous_passage": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionBasedOnPreviousPassage,
+                False,
+            ],
+            "alice_explicit_opinion_can_we_infer": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionCanWeInfer,
+                False,
+            ],
+            "alice_explicit_opinion_does_it_follow_that": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionDoesItFollowThat,
+                False,
+            ],
+            "alice_explicit_opinion_does_this_imply": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionDoesThisImply,
+                False,
+            ],
+            "alice_explicit_opinion_guaranteed_true": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionGuaranteedTrue,
+                False,
+            ],
+            "alice_explicit_opinion_justified_in_saying": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionJustifiedInSaying,
+                False,
+            ],
+            "alice_explicit_opinion_must_be_true": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionMustBeTrue,
+                False,
+            ],
+            "alice_explicit_opinion_should_assume": [
+                alice_explicit_opinion_prompt_template.RTEAliceExplicitOpinionShouldAssume,
+                False,
+            ],
+        }
+    ),
+    "boolq": OrderedDict(
+        {
+            "alice_explicit_opinion_gpt3_style": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionGpt3Style,
+                False,
+            ],
+            "alice_explicit_opinion_i_wonder": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionIWonder,
+                False,
+            ],
+            "alice_explicit_opinion_after_reading": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionAfterReading,
+                False,
+            ],
+            "alice_explicit_opinion_based_on_following_passage": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionBasedOnFollowingPassage,
+                False,
+            ],
+            "alice_explicit_opinion_based_on_previous_passage": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionBasedOnPreviousPassage,
+                False,
+            ],
+            "alice_explicit_opinion_could_you_tell_me": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionCouldYouTellMe,
+                False,
+            ],
+            "alice_explicit_opinion_exam": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionExam,
+                False,
+            ],
+            "alice_explicit_opinion_exercise": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionExercise,
+                False,
+            ],
+            "alice_explicit_opinion_valid_binary": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionValidBinary,
+                False,
+            ],
+            "alice_explicit_opinion_yes_no_question": [
+                alice_explicit_opinion_prompt_template.BoolQAliceExplicitOpinionYesNoQuestion,
+                False,
+            ],
+        }
+    ),
+    "qnli": OrderedDict(
+        {
+            "alice_explicit_opinion_based_only_on": [
+                alice_explicit_opinion_prompt_template.QNLIAliceExplicitOpinionBasedOnlyOn,
+                False,
+            ],
+            "alice_explicit_opinion_have_all_you_need": [
+                alice_explicit_opinion_prompt_template.QNLIAliceExplicitOpinionHaveAllYouNeed,
+                False,
+            ],
+            "alice_explicit_opinion_imply": [
+                alice_explicit_opinion_prompt_template.QNLIAliceExplicitOpinionImply,
+                False,
+            ],
+            "alice_explicit_opinion_possible_to_answer": [
+                alice_explicit_opinion_prompt_template.QNLIAliceExplicitOpinionPossibleToAnswer,
+                False,
+            ],
+            "alice_explicit_opinion_want_to_know": [
+                alice_explicit_opinion_prompt_template.QNLIAliceExplicitOpinionWantToKnow,
+                False,
             ],
         }
     ),
@@ -516,9 +660,12 @@ def prompt_name_to_index(prompt_name: str, set_name: str) -> Optional[int]:
 
 # Mapping from dataset to prompt name for the Alice explicit opinion subset.
 ALICE_EXPLICIT_OPINION_PROMPT_NAMES = {
-    "imdb": [f"alice_explicit_opinion_{i}" for i in range(1, 3)],
-    "amazon-polarity": [f"alice_explicit_opinion_{i}" for i in range(1, 3)],
-    "ag-news": [f"alice_explicit_opinion_{i}" for i in range(1, 9)],
+    ds: [
+        n
+        for n in prompt_dict[ds]
+        if isinstance(n, str) and n.startswith("alice_explicit_opinion")
+    ]
+    for ds in prompt_dict.keys()
 }
 # Mapping from dataset to prompt index for the Alice explicit opinion subset.
 ALICE_EXPLICIT_OPINION_PROMPT_IDXS = {
@@ -580,7 +727,7 @@ class MyPrompts:
         self,
         example: Union[dict[str, Union[str, int]], pd.Series],
         prompt_idx: int,
-        choices: list[int],
+        choice_idxs: list[int],
         partition_index: int,
         qaexamples: tuple[pd.DataFrame, list[int]],
     ) -> tuple[str, list[str]]:
@@ -591,7 +738,8 @@ class MyPrompts:
                 text.
             prompt_idx: Index of the prompt to use.
             choices: Indices of the possible answer choices (i.e., labels).
-                For example, [0, 1].
+                For example, [0, 1]. If multiple choice, the choices are in
+                [0, num_choices-1].
             partition_index: Partition index.
             qaexamples: A tuple containing a DataFrame of question-answer
                 examples. This could be used for in-context learning, for
@@ -609,20 +757,23 @@ class MyPrompts:
         if prompt_idx < self.getPromptsNum() - len(self.prompt_dict):
             idx = prompt_idx
             func = self.module[self.module.all_template_names[idx]]
-            example[lbl_tag] = choices[0] + int(self.set_name == "story_cloze")
+            example[lbl_tag] = choice_idxs[0] + int(self.set_name == "story_cloze")
             res0 = func.apply(example)
-            example[lbl_tag] = choices[1] + int(self.set_name == "story_cloze")
+            example[lbl_tag] = choice_idxs[1] + int(self.set_name == "story_cloze")
             res1 = func.apply(example)
 
             # return the question and the list of labels
             return res0[0], [res0[1], res1[1]]
         else:  # Use personal prompt
+            # Get the choice labels from which the model should choose.
+            # For example, these are "negative" vs. "positive" for imdb and
+            # "choice 1" vs. "choice 2" for ag-news.
             # For binary choice datasets, use `self.label_dict` to get the label.
             # For multiple choice, use "choice 1" and "choice 2".
-            if self.set_name not in ["ag_news", "dbpedia_14"]:
-                choice_labels = [self.label_dict[w] for w in choices]
+            if self.set_name not in MULTIPLE_CHOICE_DATASETS:
+                ans_choice_labels = [self.label_dict[w] for w in choice_idxs]
             else:
-                choice_labels = ["choice 1", "choice 2"]
+                ans_choice_labels = ["choice 1", "choice 2"]
 
             idx = prompt_idx - (self.getPromptsNum() - len(self.prompt_dict))
             prompt_template = list(self.prompt_dict.values())[idx]
@@ -631,8 +782,16 @@ class MyPrompts:
                 and len(prompt_template) == 2
                 and isinstance(prompt_template[0], PromptTemplate)
             ):
+                # Get the prompt choice labels from label_dict. These are the
+                # choices presented in the prompt, which may differ from the
+                # answer choices from which the model should choose
+                # (ans_choice_labels). For example, for ag-news,
+                # prompt_choice_labels contains two choices from
+                # ["politics", "sports", "business", "technology"], whereas
+                # ans_choices_labels is always ["choice 1", "choice 2"].
+                prompt_choice_labels = [self.label_dict[i] for i in choice_idxs]
                 question = prompt_template[0].apply(
-                    example, choice_labels, partition_index, qaexamples
+                    example, prompt_choice_labels, partition_index, qaexamples
                 )
             else:
                 template, token, _ = prompt_template  # is_default is unused.
@@ -648,16 +807,16 @@ class MyPrompts:
                             formatter.append(qaexamples[0].loc[idx][typ])
                     else:
                         formatter.append(
-                            self.label_dict[choices[int(w)]]
+                            self.label_dict[choice_idxs[int(w)]]
                             if w in ["0", "1"]
                             else example[w]
                         )
                 question = template.format(*formatter)
 
-            return question, choice_labels
+            return question, ans_choice_labels
 
 
-def get_label_and_choices(label: int, num_choices: int) -> tuple[int, list[int]]:
+def get_label_and_choice_idxs(label: int, num_choices: int) -> tuple[int, list[int]]:
     """Get the label and the choices for the question.
 
     Args:
@@ -871,8 +1030,8 @@ def constructPrompt(
     # This is the correct label list
     eg_a = []
     for w in range(eg_start_idx, eg_start_idx + num_qa_examples):
-        label, choices = get_label_and_choices(labels[w], label_num)
-        eg_a.append(choices[label])  #  append the correct answer
+        label, choice_idxs = get_label_and_choice_idxs(labels[w], label_num)
+        eg_a.append(choice_idxs[label])  #  append the correct answer
     qa_examples = (eg_q, eg_a)
 
     partition_indices = make_partition_indices(len(frame), confusion)
@@ -883,12 +1042,12 @@ def constructPrompt(
         if len(result["null"]) >= max_num:
             break
 
-        label, choices = get_label_and_choices(labels[idx], label_num)
+        label, choice_idxs = get_label_and_choice_idxs(labels[idx], label_num)
 
         # Get the question and Answer List
         # question, ans_lis = formatExample(set_name, frame.loc[idx], prompt_idx, choices)
         question, ans_lis = prompter.apply(
-            frame.loc[idx], prompt_idx, choices, partition_indices[idx], qa_examples
+            frame.loc[idx], prompt_idx, choice_idxs, partition_indices[idx], qa_examples
         )
 
         concat_data_list = [
