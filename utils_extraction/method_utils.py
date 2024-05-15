@@ -1,7 +1,7 @@
 import os
 import time
 import typing
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,6 +16,7 @@ from utils.types import (
     PermutationDictType,
     PrefixDataDictType,
     PrefixPermutationDictType,
+    ProjectionMethod,
     PromptIndicesDictType,
 )
 from utils_extraction import load_utils, metrics
@@ -31,7 +32,7 @@ from utils_extraction.classifier import (
 )
 from utils_extraction.data_utils import getConcat, getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
-from utils_extraction.projection import IdentityReduction, myReduction
+from utils_extraction.projection import IdentityReduction, make_projection, myReduction
 from utils_extraction.pseudo_label import train_pseudo_label
 
 UNSUPERVISED_METHODS = ("TPC", "KMeans", "BSS", "CCS", "Random")
@@ -671,8 +672,8 @@ def mainResults(
     test_prefix: str,
     labeled_train_data_dict: Optional[PromptIndicesDictType] = None,
     labeled_train_prefix: Optional[str] = None,
-    projection_method="PCA",
-    n_components: int = 2,
+    projection_method: Optional[ProjectionMethod] = None,
+    projection_config: dict[str, Any] = {},
     projection_only=False,
     classification_method="BSS",
     print_more=False,
@@ -715,11 +716,10 @@ def mainResults(
         labeled_train_data_dict (dict, optional): Dictionary mapping from
             labeled train dataset names to prompt indices to use.
         projection_method (str, optional): Projection method. Defaults to "PCA".
+        projection_config (dict, optional): Configuration for the projection.
         labeled_train_prefix (str): Prefix for labeled train data. Only
             applicable if using both labeled and unlabeled data, in which
             case `train_prefix` is used for the unlabeled data.
-        n_components (int, optional): The dimension you want to reduce to. -1 means no
-            projection will be implemented. Defaults to 2.
         projection_only (bool, optional): When set to true, will immediately return after
             training the projection_model. res and classify_model will be None. Defaults
             to False.
@@ -748,9 +748,8 @@ def mainResults(
     """
     if print_more:
         print(
-            "Projection method: {} (n_con = {}) in {}\nClassification method: {} in: {}".format(
+            "Projection method: {} in {}\nClassification method: {} in: {}".format(
                 projection_method,
-                n_components,
                 projection_dict,
                 classification_method,
                 test_dict,
@@ -783,11 +782,7 @@ def mainResults(
             for key, lis in projection_dict.items()
         ]
     )
-    projection_model = myReduction(
-        method=projection_method,
-        n_components=n_components,
-        print_more=print_more,
-    )
+    projection_model = make_projection(projection_method, **projection_config)
     projection_model.fit(proj_states)
 
     if projection_only:
@@ -868,7 +863,7 @@ def mainResults(
         # unlabeled data.
         classify_model, fit_result, orthogonal_dirs, intercepts = train_ccs_in_lr_span(
             data_dict,
-            permutation_dict[train_prefix],
+            permutation_dict,
             train_data_dict,
             labeled_train_data_dict,
             projection_model,
@@ -1056,7 +1051,6 @@ def mainResults(
         mode,
         projection_dict=projection_dict,
         projection_method=projection_method,
-        n_components=n_components,
         classify_model=classify_model,
         projection_model=projection_model,
         train_prefix=train_prefix,
@@ -1081,8 +1075,7 @@ def eval(
     test_dict: PromptIndicesDictType,
     mode: Mode,
     projection_dict: Optional[PromptIndicesDictType] = None,
-    projection_method="PCA",
-    n_components: int = -1,
+    projection_method: Optional[ProjectionMethod] = None,
     classify_model=None,
     projection_model=None,
     train_prefix=None,
@@ -1108,6 +1101,7 @@ def eval(
 
     # Train projection model if needed.
     if projection_model is None:
+        raise NotImplementedError("projection_model must be provided for evaluation.")
         if n_components != -1:
             if projection_dict is None:
                 raise ValueError(

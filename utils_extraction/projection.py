@@ -1,9 +1,35 @@
+import os
+from abc import ABC, abstractmethod
+from typing import Any, Optional
+
 import numpy as np
 import umap
 from sklearn.decomposition import PCA
+from sklearn.random_projection import GaussianRandomProjection
+
+from utils.types import ProjectionMethod
 
 
-class myReduction:
+class Reduction(ABC):
+
+    @abstractmethod
+    def fit(self, X, y=None, **fit_params):
+        pass
+
+    @abstractmethod
+    def transform(self, X):
+        pass
+
+    @abstractmethod
+    def save(self, path: str):
+        pass
+
+    @abstractmethod
+    def load(self, path: str):
+        pass
+
+
+class myReduction(Reduction):
     def __init__(
         self, method, n_components, print_more=False, svd_solver="full"
     ) -> None:
@@ -16,9 +42,7 @@ class myReduction:
         self.num_feature = None
         if n_components != -1:
             if self.method == "PCA":
-                self.model = PCA(
-                    n_components=n_components, svd_solver=svd_solver
-                )
+                self.model = PCA(n_components=n_components, svd_solver=svd_solver)
             elif self.method == "UMAP":
                 self.model = umap.UMAP(n_components=n_components)
 
@@ -29,9 +53,7 @@ class myReduction:
                 print("n_components = -1, will return identity")
 
         else:
-            if (
-                self.method == "UMAP"
-            ):  # for UMAP, explicitly centralize the data
+            if self.method == "UMAP":  # for UMAP, explicitly centralize the data
                 data = data - np.mean(data, axis=0)
             self.model.fit(data)
             if self.method == "PCA":  # for PCA, explicitly set mean to None
@@ -71,11 +93,62 @@ class myReduction:
             return self.n_components
         return getattr(self.model, __name)
 
+    # TODO
+    def save(self, path: str):
+        raise NotImplementedError()
 
-class IdentityReduction:
+    # TODO
+    def load(self, path: str):
+        raise NotImplementedError()
 
-    def fit(self, data):
+
+class IdentityReduction(Reduction):
+
+    def fit(self, X, y=None, **fit_params):
         pass
 
-    def transform(self, data):
-        return data
+    def transform(self, X):
+        return X
+
+    def save(self, path: str):
+        pass
+
+    def load(self, path: str):
+        pass
+
+
+class GaussianRandomMatrixProjection(GaussianRandomProjection):
+    def save(self, path: str):
+        with open(path, "wb") as f:
+            np.save(f, self.components_)
+
+    def load(self, path: str):
+        with open(path, "rb") as f:
+            self.components_ = np.load(f)
+            self.n_components_ = self.components_.shape[0]
+
+
+def make_projection(method: Optional[ProjectionMethod], **kwargs) -> Reduction:
+    if method is None:
+        return IdentityReduction()
+    if method == "PCA":
+        return myReduction(method="PCA", **kwargs)
+    if method == "UMAP":
+        return myReduction(method="UMAP", **kwargs)
+    if method == "gaussian_random":
+        return GaussianRandomMatrixProjection(**kwargs)
+    raise NotImplementedError(f"Projection method {method} is not supported.")
+
+
+def get_projection_path(method: Optional[ProjectionMethod], dir_path: str) -> str:
+    if method is None:
+        return None
+    return os.path.join(dir_path, f"projection_{method}.npy")
+
+
+def maybe_save_projection(
+    proj_model: Reduction, method: Optional[ProjectionMethod], dir_path: str
+):
+    if method is not None:
+        projection_path = get_projection_path(method, dir_path)
+        proj_model.save(projection_path)

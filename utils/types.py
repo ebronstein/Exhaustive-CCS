@@ -15,3 +15,5 @@ PrefixPermutationDictType = dict[str, PermutationDictType]
 
 PromptIndicesDictType = dict[str, list[int]]
 Mode = Literal["concat", "minus", "0", "1"]
+# TODO: add "sparse_random", "PCA", "UMAP" when implemented.
+ProjectionMethod = Literal["gaussian_random"]

@@ -25,7 +25,7 @@ from utils.types import (
 from utils_extraction import load_utils
 from utils_extraction.data_utils import getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
-from utils_extraction.projection import myReduction
+from utils_extraction.projection import Reduction
 
 Tensor = Union[torch.Tensor, np.ndarray]
 ContrastPairNp = tuple[np.ndarray, np.ndarray]
@@ -601,7 +601,7 @@ def make_contrast_pair_data(
     target_dict: PromptIndicesDictType,
     data_dict: DataDictType,
     permutation_dict: PermutationDictType,
-    projection_model: myReduction,
+    projection_model: Reduction,
     split: str,
     project_along_mean_diff=False,
     split_pair: bool = True,
@@ -846,7 +846,7 @@ def train_ccs_lr_in_span(
     permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
+    projection_model: Reduction,
     labeled_prefix: str,
     unlabeled_prefix: str,
     num_orthogonal_directions: int,
@@ -967,7 +967,7 @@ def train_ccs_in_lr_span(
     permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
+    projection_model: Reduction,
     labeled_prefix: str,
     unlabeled_prefix: str,
     num_orthogonal_directions: int,
@@ -1090,7 +1090,7 @@ def train_ccs_select_lr(
     permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
+    projection_model: Reduction,
     labeled_prefix: str,
     unlabeled_prefix: str,
     num_orthogonal_directions: int,
@@ -1280,7 +1280,7 @@ def train_ccs_lr(
     permutation_dict: PrefixPermutationDictType,
     unlabeled_train_data_dict: PromptIndicesDictType,
     labeled_train_data_dict: PromptIndicesDictType,
-    projection_model: myReduction,
+    projection_model: Reduction,
     labeled_prefix: str,
     unlabeled_prefix: str,
     train_kwargs={},

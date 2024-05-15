@@ -15,6 +15,7 @@ from sacred.config.custom_containers import DogmaticDict, DogmaticList
 from sacred.observers import FileStorageObserver
 
 from utils import file_utils
+from utils.types import ProjectionMethod
 from utils_extraction import load_utils
 from utils_extraction.classifier import ContrastPairClassifier, SpanDirsCombination
 from utils_extraction.load_utils import (
@@ -29,6 +30,7 @@ from utils_extraction.load_utils import (
     save_params,
 )
 from utils_extraction.method_utils import eval, mainResults
+from utils_extraction.projection import maybe_save_projection
 from utils_extraction.pseudo_label import validate_pseudo_label_config
 from utils_generation import hf_utils
 from utils_generation import parser as parser_utils
@@ -110,7 +112,7 @@ def getAvg(dic):
 def sacred_config():
     # Experiment name
     name: str = "extraction"
-    model = "/scratch/data/meta-llama/Llama-2-7b-chat-hf"
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct"
     # Main training datasets. Set to "burns" to use all the Burns datasets.
     datasets: Union[str, list[str]] = "imdb"
     # Optional second set of labeled training datasets. If provided, `datasets`
@@ -150,6 +152,17 @@ def sacred_config():
     seed: int = 0
     project_along_mean_diff: bool = False
     verbose: bool = False
+
+    # Data projection
+    projection_method: Optional[ProjectionMethod] = None
+    projection_n_components: Union[int, Literal["auto"]] = "auto"
+    # Gaussian random projection parameters.
+    gaussian_random_projection = {
+        "n_components": projection_n_components,
+        "eps": 0.1,
+        "random_state": 0,
+    }
+    save_projection: bool = True
 
     # Training
     method_list: Union[MethodType, list[MethodType]] = "CCS"
@@ -252,6 +265,15 @@ def _validate_config(config: dict) -> None:
     for key in ["prefix", "labeled_prefix"]:
         if config[key] not in typing.get_args(PrefixType):
             raise ValueError(f"Invalid {key}: {config[key]}")
+
+    # TODO: when TPC projection is implemented, check that n_components=1.
+    projection_method = config["projection_method"]
+    if projection_method is not None and projection_method not in typing.get_args(
+        ProjectionMethod
+    ):
+        raise ValueError(f"Invalid projection method: {projection_method}")
+    if config["eval_only"] and projection_method is not None:
+        raise ValueError("Projecting data when only evaluating is not implemented yet.")
 
     if any([method.startswith("RCCS") for method in config["method_list"]]):
         raise NotImplementedError("RCCS is not yet implemented.")
@@ -357,6 +379,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
     labeled_prompt_idx = _config["labeled_prompt_idx"]
     test_prompt_idx = _config["test_prompt_idx"]
     load_params_run_id = _config["load_params_run_id"]
+    projection_method = _config["projection_method"]
 
     run_id = _run._id
     # If the run ID is not set, Sacred observers have been
@@ -366,6 +389,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         run_dir = os.path.join(exp_dir, run_id)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
+    else:
+        run_dir = None
 
     if _config["eval_only"]:
         # TODO: adapt this handle using different prefix, labeled_prefix, and
@@ -574,22 +599,30 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             assert data_dict[prefix_].keys() == set(datasets_to_load)
             assert permutation_dict[prefix_].keys() == set(datasets_to_load)
 
-        # TODO: maybe projection should get to use other datasets that are
-        # not in the train and eval list. projection_dict is currently being
-        # used to specify the training datasets, so these two uses should be
-        # separated.
+        # Datasets used to set up the projection method. Defaults to all
+        # training datasets (labeled and unlabeled if each is provided) if
+        # training, and the evaluation datasets if only evaluating.
         projection_datasets = (
             eval_datasets
             if _config["eval_only"]
             else set(train_datasets + labeled_train_datasets)
         )
-        # TODO: use prompt_idx, labeled_prompt_idx, and test_prompt_idx somehow
-        # for the projection datasets as well.
-        # Arbitrarily use prefix instead of test_prefix to index into data_dict
-        # since the number of prompts should be the same for both.
-        projection_dict = {
-            ds: list(range(len(data_dict[prefix][ds]))) for ds in projection_datasets
-        }
+        # Set which prompt indices are used for projection per dataset.
+        # Use the main training data prompts and labeled training data prompts
+        # if provided, otherwise use all prompts in data_dict for the training
+        # prefix and dataset.
+        projection_dict = {}
+        for ds in projection_datasets:
+            ds_prompt_idx = set()
+            for prompt_idx_dict in [prompt_idx, labeled_prompt_idx, test_prompt_idx]:
+                if prompt_idx_dict is not None and prompt_idx_dict.get(ds) is not None:
+                    ds_prompt_idx.update(prompt_idx_dict[ds])
+            if ds_prompt_idx:
+                projection_dict[ds] = sorted(list(ds_prompt_idx))
+            else:
+                # Default to the number of prompts in data_dict for the prefix
+                # and dataset.
+                projection_dict[ds] = list(range(len(data_dict[prefix][ds])))
 
         # Main training data prompt indices.
         train_data_dict = {}
@@ -597,7 +630,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             if prompt_idx is not None and prompt_idx.get(ds) is not None:
                 train_data_dict[ds] = prompt_idx[ds]
             else:
-                train_data_dict[ds] = range(len(data_dict[prefix][ds]))
+                train_data_dict[ds] = list(range(len(data_dict[prefix][ds])))
         # Labeled training data prompt indices.
         labeled_train_data_dict = {}
         for ds in labeled_train_datasets:
@@ -607,16 +640,16 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             ):
                 labeled_train_data_dict[ds] = labeled_prompt_idx[ds]
             else:
-                labeled_train_data_dict[ds] = range(len(data_dict[labeled_prefix][ds]))
+                labeled_train_data_dict[ds] = list(
+                    range(len(data_dict[labeled_prefix][ds]))
+                )
         # Test data prompt indices.
         test_dict = {}
         for ds in eval_datasets:
             if test_prompt_idx is not None and test_prompt_idx.get(ds) is not None:
                 test_dict[ds] = test_prompt_idx[ds]
             else:
-                test_dict[ds] = range(len(data_dict[test_prefix][ds]))
-
-        n_components = 1 if method == "TPC" else -1
+                test_dict[ds] = list(range(len(data_dict[test_prefix][ds])))
 
         method_str = get_method_str(method)
         full_method_str = maybe_append_project_suffix(
@@ -639,6 +672,12 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             #     )
         else:
             constraints = None
+
+        # Projection config.
+        if projection_method == "gaussian_random":
+            projection_config = _config["gaussian_random_projection"]
+        else:
+            projection_config = {}
 
         train_kwargs = dict(
             n_tries=_config["n_tries"],
@@ -664,8 +703,8 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             mode=mode,
             labeled_train_data_dict=labeled_train_data_dict,
             labeled_train_prefix=labeled_prefix,
-            projection_method="PCA",
-            n_components=n_components,
+            projection_method=projection_method,
+            projection_config=projection_config,
             classification_method=method_,
             train_kwargs=train_kwargs,
             print_more=_config["verbose"],
@@ -738,6 +777,10 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
                 save_fit_result(fit_result, run_dir, method, logger=_log)
             if _config["save_fit_plots"]:
                 save_fit_plots(fit_result, run_dir, method, logger=_log)
+
+        # Save projection model.
+        if _config["save_projection"]:
+            maybe_save_projection(proj_model, projection_method, run_dir)
 
         # Save parameters if needed.
         if _config["save_params"] and not _config["eval_only"]:
