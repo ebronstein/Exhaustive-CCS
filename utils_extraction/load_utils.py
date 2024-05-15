@@ -281,6 +281,8 @@ def get_hidden_states_dirs(
                 )
             gen_dirs[prompt_idx] = gen_dir
 
+    # TODO: log warning or raise error if not all the prompt indices
+    # were found.
     return {idx: os.path.join(load_dir, d) for idx, d in gen_dirs.items()}
 
 
