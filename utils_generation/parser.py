@@ -95,11 +95,15 @@ def getArgs():
                 prefix, json_dir
             ))
 
-    if args.prompt_idx is None and args.prompt_name is None:
-        raise ValueError(
-            "Either --prompt_idx or --prompt_name must be provided.")
-    if args.swipe and args.prompt_name is not None:
-        raise ValueError("Cannot use --swipe and --prompt_name together.")
+    if args.swipe:
+        if args.prompt_idx is not None:
+            raise ValueError("Cannot use --swipe and --prompt_idx together.")
+        if args.prompt_name is not None:
+            raise ValueError("Cannot use --swipe and --prompt_name together.")
+    else:
+        if args.prompt_idx is None and args.prompt_name is None:
+            raise ValueError(
+                "Either --prompt_idx or --prompt_name must be provided if not --swipe.")
 
     # Set default states_location according to model type
     args.states_location = get_states_location_str(args.states_location, args.model, use_auth_token=HF_AUTH_TOKEN)
