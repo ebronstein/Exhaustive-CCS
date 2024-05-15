@@ -170,6 +170,8 @@ def loadDatasets(args, tokenizer):
     prompt_idx_list = args.prompt_idx
     prompt_names = args.prompt_name
 
+    # TODO: change this to allow for different prompt indices, names, or subsets
+    # to be specified for different datasets.
     # deal with the length of prompt_idx_list, and extend
     # end up making prompt_idx_list and set_list with the same length
     if not args.swipe:
