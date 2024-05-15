@@ -614,7 +614,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
         projection_dict = {}
         for ds in projection_datasets:
             ds_prompt_idx = set()
-            for prompt_idx_dict in [prompt_idx, labeled_prompt_idx, test_prompt_idx]:
+            for prompt_idx_dict in [prompt_idx, labeled_prompt_idx]:
                 if prompt_idx_dict is not None and prompt_idx_dict.get(ds) is not None:
                     ds_prompt_idx.update(prompt_idx_dict[ds])
             if ds_prompt_idx:
