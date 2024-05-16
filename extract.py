@@ -15,7 +15,7 @@ from sacred.config.custom_containers import DogmaticDict, DogmaticList
 from sacred.observers import FileStorageObserver
 
 from utils import file_utils
-from utils.types import ProjectionMethod
+from utils.types import PiecewiseLinearSchedule, ProjectionMethod
 from utils_extraction import load_utils
 from utils_extraction.classifier import ContrastPairClassifier, SpanDirsCombination
 from utils_extraction.load_utils import (
@@ -140,7 +140,7 @@ def sacred_config():
     # Prompt indices or names for the evaluation data. If None, all prompts will
     # be used. Defaults to all prompts (not just default prompts).
     test_prompt_idx: Optional[dict[str, list[int]]] = None
-    test_prompt_subset: Optional[str] = "all"
+    test_prompt_subset: Optional[str] = "default"
     data_num: int = 1000
     mode: Literal["auto", "minus", "concat"] = "auto"
     load_dir = "generation_results"
@@ -168,11 +168,11 @@ def sacred_config():
     method_list: Union[MethodType, list[MethodType]] = "CCS"
     n_tries: int = 10
     n_epochs: int = 1000
-    sup_weight: float = 1.0
-    unsup_weight: float = 1.0
-    consistency_weight: float = 1.0
-    confidence_weight: float = 1.0
-    lr: float = 1e-2
+    sup_weight: PiecewiseLinearSchedule = 1.0
+    unsup_weight: PiecewiseLinearSchedule = 1.0
+    consistency_weight: PiecewiseLinearSchedule = 1.0
+    confidence_weight: PiecewiseLinearSchedule = 1.0
+    lr: PiecewiseLinearSchedule = 1e-2
     include_bias: bool = True
     weight_decay: float = 0.0
     opt: Literal["sgd", "adam"] = "sgd"
@@ -259,6 +259,29 @@ def _convert_dogmatics_to_standard(obj: Any) -> Any:
         return [_convert_dogmatics_to_standard(elem) for elem in obj]
     else:
         return obj
+
+
+def _format_schedule(schedule: PiecewiseLinearSchedule) -> PiecewiseLinearSchedule:
+    if isinstance(schedule, (float, int)):
+        return float(schedule)
+
+    if isinstance(schedule, (list, tuple)):
+        for item in schedule:
+            if (
+                not isinstance(item, (tuple, list))
+                or len(item) != 2
+                or not isinstance(item[0], int)
+                or not isinstance(item[1], float)
+            ):
+                raise TypeError(
+                    "Schedule must be a list or tuple of (int, float) tuples/lists"
+                )
+
+        return sorted([(int(epoch), float(value)) for epoch, value in schedule])
+
+    raise TypeError(
+        "Schedule must be a float, or a list or tuple of (int, float) tuples/lists"
+    )
 
 
 def _validate_config(config: dict) -> None:
@@ -352,6 +375,15 @@ def _format_config(config: dict) -> dict:
     # TODO: validate location more extensively.
     if config["location"] == "decoder" and config["layer"] < 0:
         config["layer"] += config["num_layers"]
+
+    for key in [
+        "lr",
+        "sup_weight",
+        "unsup_weight",
+        "confidence_weight",
+        "consistency_weight",
+    ]:
+        config[key] = _format_schedule(config[key])
 
     return config
 

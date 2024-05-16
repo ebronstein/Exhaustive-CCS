@@ -14,6 +14,7 @@ from utils.types import (
     DataDictType,
     Mode,
     PermutationDictType,
+    PiecewiseLinearSchedule,
     PrefixPermutationDictType,
 )
 
@@ -59,6 +60,34 @@ def get_combined_datasets_str(
 
     labeled_datasets_str = get_datasets_str(labeled_datasets)
     return f"nolabel_{datasets_str}-label_{labeled_datasets_str}"
+
+
+def make_loss_weight_schedule_tag(loss_weight: PiecewiseLinearSchedule) -> str:
+    """
+    Converts a loss weight schedule into a string representation.
+
+    Args:
+        loss_weight (PiecewiseLinearSchedule): The loss weight schedule to convert.
+
+    Returns:
+        str: The string representation of the loss weight schedule.
+
+    Raises:
+        TypeError: If the loss weight schedule is not a float, or a list or tuple of (int, float) tuples/lists.
+    """
+    if isinstance(loss_weight, (float, int)):
+        return str(loss_weight)
+
+    if isinstance(loss_weight, (list, tuple)):
+        loss_weight = sorted(
+            [(int(epoch), float(value)) for epoch, value in loss_weight]
+        )
+        return "_".join(f"{epoch}_{value}" for epoch, value in loss_weight)
+
+    raise TypeError(
+        "Loss weight schedule must be a float, or a list or tuple of (int, float) "
+        f"tuples/lists, got {loss_weight}"
+    )
 
 
 def get_exp_dir(

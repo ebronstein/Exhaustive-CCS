@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import typing
@@ -16,8 +17,10 @@ import torch.optim as optim
 
 from utils.types import (
     DataDictType,
+    Milestones,
     Mode,
     PermutationDictType,
+    PiecewiseLinearSchedule,
     PrefixDataDictType,
     PrefixPermutationDictType,
     PromptIndicesDictType,
@@ -160,6 +163,29 @@ def make_coef_bias(
     else:
         bias = None
     return coef, bias
+
+
+def piecewise_linear(epoch: int, milestones: Milestones) -> float:
+    # NOTE: assumes milestones are sorted.
+    if epoch <= milestones[0][0]:
+        return milestones[0][1]
+    if epoch >= milestones[-1][0]:
+        return milestones[-1][1]
+
+    for (start_epoch, start_lr), (end_epoch, end_lr) in zip(
+        milestones[:-1], milestones[1:]
+    ):
+        if start_epoch <= epoch <= end_epoch:
+            # Linear interpolation
+            return start_lr + (end_lr - start_lr) * (epoch - start_epoch) / (
+                end_epoch - start_epoch
+            )
+
+    raise ValueError("Epoch not found in milestones.")
+
+
+def piecewise_linear_lambda(milestones: Milestones) -> callable:
+    return functools.partial(piecewise_linear, milestones=milestones)
 
 
 class ContrastPairClassifier(nn.Module):
@@ -365,13 +391,13 @@ class ContrastPairClassifier(nn.Module):
         test_unsup_x1: torch.Tensor,
         test_unsup_y: torch.Tensor,
         n_epochs=1000,
-        lr=1e-2,
-        unsup_weight=1.0,
-        sup_weight=1.0,
-        consistency_weight=1.0,
-        confidence_weight=1.0,
+        lr: PiecewiseLinearSchedule = 1e-2,
+        unsup_weight: PiecewiseLinearSchedule = 1.0,
+        sup_weight: PiecewiseLinearSchedule = 1.0,
+        consistency_weight: PiecewiseLinearSchedule = 1.0,
+        confidence_weight: PiecewiseLinearSchedule = 1.0,
         weight_decay: float = 0.0,
-        opt: str = "sgd",
+        opt: str = "adam",
         eval_freq: int = 20,
         logger=None,
     ) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
@@ -382,11 +408,46 @@ class ContrastPairClassifier(nn.Module):
         else:
             raise ValueError(f"Unknown optimizer: {opt}")
 
+        # Learning rate scheduler.
+        if isinstance(lr, float):
+            scheduler = None
+        else:
+            # TODO: check this works as expected.
+            lr_lambda = piecewise_linear_lambda(lr)
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+        # Loss weight schedules.
+        get_sup_weight = (
+            piecewise_linear_lambda(sup_weight)
+            if isinstance(sup_weight, list)
+            else lambda _: sup_weight
+        )
+        get_unsup_weight = (
+            piecewise_linear_lambda(unsup_weight)
+            if isinstance(unsup_weight, list)
+            else lambda _: unsup_weight
+        )
+        get_consistency_weight = (
+            piecewise_linear_lambda(consistency_weight)
+            if isinstance(consistency_weight, list)
+            else lambda _: consistency_weight
+        )
+        get_confidence_weight = (
+            piecewise_linear_lambda(confidence_weight)
+            if isinstance(confidence_weight, list)
+            else lambda _: confidence_weight
+        )
+
         train_history = defaultdict(list)
         eval_history = defaultdict(list)
         self.train()
 
         for epoch in range(n_epochs):
+            cur_sup_weight = get_sup_weight(epoch)
+            cur_unsup_weight = get_unsup_weight(epoch)
+            cur_consistency_weight = get_consistency_weight(epoch)
+            cur_confidence_weight = get_confidence_weight(epoch)
+
             optimizer.zero_grad()
             train_losses = self.compute_loss(
                 train_sup_x0,
@@ -394,13 +455,15 @@ class ContrastPairClassifier(nn.Module):
                 train_sup_y,
                 train_unsup_x0,
                 train_unsup_x1,
-                unsup_weight=unsup_weight,
-                sup_weight=sup_weight,
-                consistency_weight=consistency_weight,
-                confidence_weight=confidence_weight,
+                unsup_weight=cur_unsup_weight,
+                sup_weight=cur_sup_weight,
+                consistency_weight=cur_consistency_weight,
+                confidence_weight=cur_confidence_weight,
             )
             train_losses["total_loss"].backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
             # Optionally project parameters.
             if self.orthogonal_dirs is not None:
@@ -419,10 +482,10 @@ class ContrastPairClassifier(nn.Module):
                         test_sup_y,
                         test_unsup_x0,
                         test_unsup_x1,
-                        unsup_weight=unsup_weight,
-                        sup_weight=sup_weight,
-                        consistency_weight=consistency_weight,
-                        confidence_weight=confidence_weight,
+                        unsup_weight=cur_unsup_weight,
+                        sup_weight=cur_sup_weight,
+                        consistency_weight=cur_consistency_weight,
+                        confidence_weight=cur_confidence_weight,
                     )
                 train_sup_acc = self.evaluate_accuracy(
                     train_sup_x0, train_sup_x1, train_sup_y
@@ -504,11 +567,11 @@ def fit_ccs_lr(
     span_dirs_combination: SpanDirsCombination = "linear",
     n_tries=10,
     n_epochs=1000,
-    lr=1e-2,
-    unsup_weight=1.0,
-    sup_weight=1.0,
-    consistency_weight=1.0,
-    confidence_weight=1.0,
+    lr: PiecewiseLinearSchedule = 1e-2,
+    unsup_weight: PiecewiseLinearSchedule = 1.0,
+    sup_weight: PiecewiseLinearSchedule = 1.0,
+    consistency_weight: PiecewiseLinearSchedule = 1.0,
+    confidence_weight: PiecewiseLinearSchedule = 1.0,
     weight_decay: float = 0.0,
     opt: str = "sgd",
     include_bias: bool = True,

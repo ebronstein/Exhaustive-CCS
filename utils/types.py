@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 
 import numpy as np
 
@@ -17,3 +17,7 @@ PromptIndicesDictType = dict[str, list[int]]
 Mode = Literal["concat", "minus", "0", "1"]
 # TODO: add "sparse_random", "PCA", "UMAP" when implemented.
 ProjectionMethod = Literal["gaussian_random"]
+
+# Used for piecewise linear learning rate or loss weight schedules.
+Milestones = list[tuple[int, float]]
+PiecewiseLinearSchedule = Union[float, Milestones]
