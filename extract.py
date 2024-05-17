@@ -125,8 +125,8 @@ def sacred_config():
     # Prefix for labeled training data (`labeled_datasets`). If not provided and
     # labeled datasets are used, defaults to `prefix`.
     labeled_prefix: Optional[PrefixType] = None
-    # Prefix to use for evaluation. If None, the training prefix will be used.
-    test_prefix: Optional[PrefixType] = None
+    # Prefix to use for evaluation.
+    test_prefix: Optional[PrefixType] = "normal"
     # Prompt indices or names for the main training data. prompt_idx[dataset] is
     # a list of prompt indices or names for `dataset`. If an element is an int,
     # it is interpreted as an index, otherwise as a name If None, all default
