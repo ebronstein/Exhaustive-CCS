@@ -178,6 +178,20 @@ def sacred_config():
     opt: Literal["sgd", "adam"] = "sgd"
     num_orthogonal_directions: int = 4
     projected_sgd: bool = True
+    # Loss weighting.
+    loss_weighting: Optional[Literal["constant", "normalize"]] = None
+    scale_init_weights: bool = False
+    normalize_loss_weighting = {"window": 10}
+    if loss_weighting is None:
+        loss_weighting_cfg = {}
+    else:
+        loss_weighting_cfg = {
+            "type": loss_weighting,
+            "scale_init_weights": scale_init_weights,
+        }
+        if loss_weighting == "normalize":
+            loss_weighting_cfg.update(**normalize_loss_weighting)
+
     # Run directory or datasets ancestor directory to load orthogonal
     # directions from. If provided, can be the run directory, in which
     # case the orthogonal directions should be at
@@ -302,6 +316,9 @@ def _validate_config(config: dict) -> None:
         raise NotImplementedError("RCCS is not yet implemented.")
 
     validate_pseudo_label_config(config["pseudolabel"])
+
+    if config["loss_weighting"] not in [None, "constant", "normalize"]:
+        raise ValueError(f"Invalid loss weighting method: {config['loss_weighting']}")
 
 
 def _format_config(config: dict) -> dict:
@@ -718,6 +735,7 @@ def main(model, save_dir, exp_dir, _config: dict, seed: int, _log, _run):
             unsup_weight=_config["unsup_weight"],
             consistency_weight=_config["consistency_weight"],
             confidence_weight=_config["confidence_weight"],
+            loss_weighting_cfg=_config["loss_weighting_cfg"],
             lr=_config["lr"],
             include_bias=_config["include_bias"],
             weight_decay=_config["weight_decay"],

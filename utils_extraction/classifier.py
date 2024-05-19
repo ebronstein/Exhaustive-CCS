@@ -28,6 +28,7 @@ from utils.types import (
 from utils_extraction import load_utils
 from utils_extraction.data_utils import getPair
 from utils_extraction.logistic_reg import LogisticRegressionClassifier
+from utils_extraction.loss_weighting import make_loss_weighting
 from utils_extraction.projection import Reduction
 
 Tensor = Union[torch.Tensor, np.ndarray]
@@ -52,7 +53,16 @@ FIT_CCS_LR_KWARGS_NAMES = CCS_LR_KWARGS_NAMES + [
     "n_tries",
     "include_bias",
     "span_dirs_combination",
+    "loss_weighting_cfg",
 ]
+
+# Names of different loss terms.
+SUP_LOSS_KEY = "supervised_loss"
+BCE_LOSS_0_KEY = "bce_loss_0"
+BCE_LOSS_1_KEY = "bce_loss_1"
+UNSUP_LOSS_KEY = "unsupervised_loss"
+CONSISTENCY_LOSS_KEY = "consistency_loss"
+CONFIDENCE_LOSS_KEY = "confidence_loss"
 
 
 def normalize(directions):
@@ -196,6 +206,7 @@ class ContrastPairClassifier(nn.Module):
         span_dirs: Optional[np.ndarray] = None,
         span_dirs_combination: SpanDirsCombination = "linear",
         include_bias=True,
+        loss_weighting_cfg: dict = {},
         device="cuda",
         verbose=False,
     ):
@@ -219,6 +230,13 @@ class ContrastPairClassifier(nn.Module):
         self.include_bias = include_bias
         self.device = device
         self.verbose = verbose
+
+        if loss_weighting_cfg:
+            loss_weighting_cfg = copy(loss_weighting_cfg)
+            self.loss_weighting = loss_weighting_cfg.pop("type")
+        else:
+            self.loss_weighting = None
+        self.loss_weighting_cfg = loss_weighting_cfg or {}
 
         if span_dirs_combination not in typing.get_args(SpanDirsCombination):
             raise ValueError(
@@ -319,13 +337,15 @@ class ContrastPairClassifier(nn.Module):
         self,
         unsup_x0: torch.Tensor,
         unsup_x1: torch.Tensor,
-        consistency_weight: float = 1.0,
-        confidence_weight: float = 1.0,
+        loss_weights: dict[str, float] = {},
     ) -> OrderedDict:
         unsup_prob_0 = self.predict(unsup_x0)
         unsup_prob_1 = self.predict(unsup_x1)
         consistency_loss = ((unsup_prob_0 - (1 - unsup_prob_1)) ** 2).mean()
         confidence_loss = torch.min(unsup_prob_0, unsup_prob_1).pow(2).mean()
+
+        consistency_weight = loss_weights.get(CONSISTENCY_LOSS_KEY, 1.0)
+        confidence_weight = loss_weights.get(CONFIDENCE_LOSS_KEY, 1.0)
         unsupervised_loss = (
             consistency_weight * consistency_loss + confidence_weight * confidence_loss
         )
@@ -345,18 +365,18 @@ class ContrastPairClassifier(nn.Module):
         sup_y: torch.Tensor,
         unsup_x0: torch.Tensor,
         unsup_x1: torch.Tensor,
-        unsup_weight=1.0,
-        sup_weight=1.0,
-        consistency_weight=1.0,
-        confidence_weight=1.0,
+        loss_weights: dict[str, float] = {},
         # l2_weight=0.0,
     ) -> OrderedDict:
         supervised_loss_dict = self.compute_supervised_loss(sup_x0, sup_x1, sup_y)
+
+        unsup_loss_weights = {}
+        for key in [CONSISTENCY_LOSS_KEY, CONFIDENCE_LOSS_KEY]:
+            if key in loss_weights:
+                unsup_loss_weights[key] = loss_weights[key]
+
         unsupervised_loss_dict = self.compute_unsupervised_loss(
-            unsup_x0,
-            unsup_x1,
-            consistency_weight=consistency_weight,
-            confidence_weight=confidence_weight,
+            unsup_x0, unsup_x1, unsup_loss_weights
         )
 
         # L2 regularization loss.
@@ -364,6 +384,8 @@ class ContrastPairClassifier(nn.Module):
         # if self.bias is not None:
         #     l2_reg_loss += torch.norm(self.bias) ** 2
 
+        sup_weight = loss_weights.get(SUP_LOSS_KEY, 1.0)
+        unsup_weight = loss_weights.get(UNSUP_LOSS_KEY, 1.0)
         total_loss = (
             sup_weight * supervised_loss_dict["supervised_loss"]
             + unsup_weight * unsupervised_loss_dict["unsupervised_loss"]
@@ -416,37 +438,70 @@ class ContrastPairClassifier(nn.Module):
             lr_lambda = piecewise_linear_lambda(lr)
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-        # Loss weight schedules.
-        get_sup_weight = (
-            piecewise_linear_lambda(sup_weight)
-            if isinstance(sup_weight, list)
-            else lambda _: sup_weight
-        )
-        get_unsup_weight = (
-            piecewise_linear_lambda(unsup_weight)
-            if isinstance(unsup_weight, list)
-            else lambda _: unsup_weight
-        )
-        get_consistency_weight = (
-            piecewise_linear_lambda(consistency_weight)
-            if isinstance(consistency_weight, list)
-            else lambda _: consistency_weight
-        )
-        get_confidence_weight = (
-            piecewise_linear_lambda(confidence_weight)
-            if isinstance(confidence_weight, list)
-            else lambda _: confidence_weight
-        )
+        # Loss weighting method.
+        if self.loss_weighting is None:
+            loss_weighting = None
+            # Loss weight schedules.
+            get_sup_weight = (
+                piecewise_linear_lambda(sup_weight)
+                if isinstance(sup_weight, list)
+                else lambda _: sup_weight
+            )
+            get_unsup_weight = (
+                piecewise_linear_lambda(unsup_weight)
+                if isinstance(unsup_weight, list)
+                else lambda _: unsup_weight
+            )
+            get_consistency_weight = (
+                piecewise_linear_lambda(consistency_weight)
+                if isinstance(consistency_weight, list)
+                else lambda _: consistency_weight
+            )
+            get_confidence_weight = (
+                piecewise_linear_lambda(confidence_weight)
+                if isinstance(confidence_weight, list)
+                else lambda _: confidence_weight
+            )
+        else:
+            if (
+                isinstance(sup_weight, list)
+                or isinstance(unsup_weight, list)
+                or isinstance(consistency_weight, list)
+                or isinstance(confidence_weight, list)
+            ):
+                raise ValueError(
+                    "Cannot use piecewise linear schedules with dynamic loss weighting method."
+                )
+            # Only update the following loss weights.
+            loss_weights = {
+                SUP_LOSS_KEY: sup_weight,
+                CONSISTENCY_LOSS_KEY: consistency_weight,
+                CONFIDENCE_LOSS_KEY: confidence_weight,
+            }
+            loss_weighting = make_loss_weighting(
+                self.loss_weighting,
+                loss_weights,
+                **self.loss_weighting_cfg,
+            )
 
         train_history = defaultdict(list)
         eval_history = defaultdict(list)
         self.train()
 
         for epoch in range(n_epochs):
-            cur_sup_weight = get_sup_weight(epoch)
-            cur_unsup_weight = get_unsup_weight(epoch)
-            cur_consistency_weight = get_consistency_weight(epoch)
-            cur_confidence_weight = get_confidence_weight(epoch)
+            if loss_weighting is not None:
+                loss_weights = loss_weighting.get_loss_weights()
+            else:
+                loss_weights = {
+                    SUP_LOSS_KEY: get_sup_weight(epoch),
+                    UNSUP_LOSS_KEY: get_unsup_weight(epoch),
+                    CONSISTENCY_LOSS_KEY: get_consistency_weight(epoch),
+                    CONFIDENCE_LOSS_KEY: get_confidence_weight(epoch),
+                }
+
+            # Add losses to history.
+            for key, loss_weight in loss_weights.items():
+                train_history[f"{key}_weight"].append(loss_weight)
 
             optimizer.zero_grad()
             train_losses = self.compute_loss(
@@ -455,20 +510,20 @@ class ContrastPairClassifier(nn.Module):
                 train_sup_y,
                 train_unsup_x0,
                 train_unsup_x1,
-                unsup_weight=cur_unsup_weight,
-                sup_weight=cur_sup_weight,
-                consistency_weight=cur_consistency_weight,
-                confidence_weight=cur_confidence_weight,
+                loss_weights,
             )
             train_losses["total_loss"].backward()
             optimizer.step()
             if scheduler is not None:
                 scheduler.step()
+            if loss_weighting is not None:
+                loss_weighting.update(train_losses)
 
             # Optionally project parameters.
             if self.orthogonal_dirs is not None:
                 self.project_params(self.orthogonal_dirs)
 
+            # Add losses to history.
             for key, loss in train_losses.items():
                 train_history[key].append(loss.item())
 
@@ -482,10 +537,7 @@ class ContrastPairClassifier(nn.Module):
                         test_sup_y,
                         test_unsup_x0,
                         test_unsup_x1,
-                        unsup_weight=cur_unsup_weight,
-                        sup_weight=cur_sup_weight,
-                        consistency_weight=cur_consistency_weight,
-                        confidence_weight=cur_confidence_weight,
+                        loss_weights,
                     )
                 train_sup_acc = self.evaluate_accuracy(
                     train_sup_x0, train_sup_x1, train_sup_y
@@ -572,6 +624,7 @@ def fit_ccs_lr(
     sup_weight: PiecewiseLinearSchedule = 1.0,
     consistency_weight: PiecewiseLinearSchedule = 1.0,
     confidence_weight: PiecewiseLinearSchedule = 1.0,
+    loss_weighting_cfg: dict = {},
     weight_decay: float = 0.0,
     opt: str = "sgd",
     include_bias: bool = True,
@@ -613,6 +666,7 @@ def fit_ccs_lr(
             span_dirs=span_dirs,
             span_dirs_combination=span_dirs_combination,
             include_bias=include_bias,
+            loss_weighting_cfg=loss_weighting_cfg,
             device=device,
             verbose=verbose,
         )
