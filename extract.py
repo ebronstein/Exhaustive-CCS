@@ -179,9 +179,14 @@ def sacred_config():
     num_orthogonal_directions: int = 4
     projected_sgd: bool = True
     # Loss weighting.
-    loss_weighting: Optional[Literal["constant", "normalize"]] = None
+    loss_weighting: Optional[Literal["constant", "normalize", "softadapt"]] = None
     scale_init_weights: bool = False
     normalize_loss_weighting = {"window": 10}
+    softadapt = {
+        "normalize_loss_diff": True,
+        "loss_weighted": True,
+        "beta": 0.1,
+    }
     if loss_weighting is None:
         loss_weighting_cfg = {}
     else:
@@ -191,6 +196,8 @@ def sacred_config():
         }
         if loss_weighting == "normalize":
             loss_weighting_cfg.update(**normalize_loss_weighting)
+        elif loss_weighting == "softadapt":
+            loss_weighting_cfg.update(**softadapt)
 
     # Run directory or datasets ancestor directory to load orthogonal
     # directions from. If provided, can be the run directory, in which
